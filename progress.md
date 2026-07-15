@@ -9,4 +9,5 @@
 - Detect stage: page renders OK; empty key → clean one-line error.
 - Export stage: mock label → both Excel files verified, then mock removed.
 - User added mid-session: .env.example, .gitignore, git commit, push to GitHub.
-- Next: git init + commit + GitHub push.
+- git init (main), initial commit, pushed to private repo github.com/adoistic/stem-diagrams. .env/data/.venv excluded via .gitignore.
+- DONE. To go live: fill both keys in arxiv_diagram_pipeline/.env and run `python run_pipeline.py`.
