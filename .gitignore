@@ -1,0 +1,14 @@
+# Secrets — never commit real keys
+arxiv_diagram_pipeline/.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Pipeline data (PDFs, page renders, OCR output, Excel exports)
+arxiv_diagram_pipeline/data/
+
+# macOS
+.DS_Store
