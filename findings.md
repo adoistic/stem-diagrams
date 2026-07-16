@@ -19,6 +19,13 @@
 - ExFAT-over-USB gotcha: macOS writes `._<filename>` AppleDouble sidecar files alongside every real file on ExFAT (no native metadata support). `find -name "*.jpg"` picks these up too (they carry the same extension), inflating file counts 2x. Always filter `grep -v '/\._'` or match on the real `page_*` prefix when counting. The pipeline code itself is unaffected — `diagrams_dir.glob(f"page_{page:03d}_*")` in the label stage only matches real files since sidecar names start with `._`, not `page_`.
 - Full real run (42 papers, 6 pages each, all 6 fields): detect found 72 diagram pages out of 248 analyzed (took ~3.5h, mostly OpenRouter network latency/retries, no data lost). Mistral OCR on those 72 pages extracted 143 real images (~10 min, much faster than the reasoning-model detect calls) — some pages are heavily over-segmented (one page yielded 18 images, likely sub-panel/legend fragments rather than 18 distinct diagrams) — worth a quality caveat, not a bug.
 
+## v2 production findings (2026-07-16)
+- **arXiv 429-throttles aggressive API pagination.** Front-loading the whole projected paper need (5k+ registrations in ~7 min of back-to-back paginated queries, interleaved with PDF downloads) got the API 429'd; the paginator misread 3 failed retries as end-of-results → false "supply exhausted". Fixes: thread-safe global throttle (harvest+download threads previously raced past the 3s spacing), 429 → 60-300s backoff distinct from genuine empty feeds (TemporarilyUnavailable exception), rolling ~1500-paper harvest buffer instead of front-loading (downloader only consumes ~20 papers/min).
+- Graceful restart mid-production verified: SIGTERM drained in-flight calls (133 labeled), relaunch resumed instantly, zero loss.
+- LaTeX backslashes in LLM JSON output (`\alpha`) = "Invalid \escape" parse failures (~12% of label calls!) — fixed by doubling invalid escape sequences before a second parse attempt in extract_json.
+- Local tiny-file filter (<8KB JPEG) is the dominant reject (77/82 in test); spot-checked correct — sub-8KB crops are icon-sized fragments. LLM rejects catch data plots/fragments as prompted.
+- Measured economics: ~$0.019 per accepted diagram → ~$550-600 for 30k. Throughput ~10-14 accepted/min at 20 workers (detect is the long pole at ~15s/call) → ~2-2.5 days.
+
 ## Field → arXiv query mapping (design)
 - Semiconductor Engineering: cat:cond-mat.mes-hall / physics.app-ph + semiconductor keywords
 - Manufacturing Engineering: keyword-driven (manufacturing, additive manufacturing) over eess.SY/physics.app-ph/cs.CE

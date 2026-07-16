@@ -2,6 +2,7 @@
 
 import logging
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 
@@ -13,14 +14,23 @@ ATOM = {"atom": "http://www.w3.org/2005/Atom"}
 log = logging.getLogger(__name__)
 
 _last_request = 0.0
+_throttle_lock = threading.Lock()
+
+
+class TemporarilyUnavailable(RuntimeError):
+    """arXiv is rate-limiting or persistently erroring — retry much later.
+    Distinct from end-of-results, which is a genuine empty feed."""
 
 
 def _throttle(delay):
+    """Global 3s spacing across ALL threads (arXiv politeness). Sleeping while
+    holding the lock is deliberate: it serializes every arXiv request."""
     global _last_request
-    wait = delay - (time.monotonic() - _last_request)
-    if wait > 0:
-        time.sleep(wait)
-    _last_request = time.monotonic()
+    with _throttle_lock:
+        wait = delay - (time.monotonic() - _last_request)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request = time.monotonic()
 
 
 def _parse_entries(xml_text):
@@ -65,6 +75,41 @@ def search(query, max_results, delay=3.0):
     return _parse_entries(resp.text)
 
 
+def _fetch_page(params, delay, max_attempts=5):
+    """Fetch one API page. Returns the entry list; [] means a genuine end of
+    results (arXiv answered 200 with an empty feed three times). Raises
+    TemporarilyUnavailable when arXiv keeps 429ing/erroring — callers must
+    NOT confuse that with running out of papers."""
+    empty_seen = 0
+    for attempt in range(1, max_attempts + 1):
+        _throttle(delay)
+        try:
+            resp = requests.get(API_URL, params=params, timeout=60)
+            if resp.status_code == 429:
+                wait = min(300, 60 * attempt)
+                log.warning("arXiv 429 (start=%s); backing off %ds",
+                            params["start"], wait)
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            papers = _parse_entries(resp.text)
+            if papers:
+                return papers
+            empty_seen += 1
+            if empty_seen >= 3:
+                return []
+            log.warning("arXiv page empty (start=%s); recheck %d/3",
+                        params["start"], empty_seen)
+            time.sleep(5)
+        except requests.RequestException as exc:
+            log.warning("arXiv page fetch failed (start=%s, attempt=%d): %s",
+                        params["start"], attempt, exc)
+            time.sleep(10)
+    raise TemporarilyUnavailable(
+        f"arXiv API unavailable after {max_attempts} attempts "
+        f"(start={params['start']}) — likely rate-limited")
+
+
 def search_paginated(query, total, page_size=200, delay=3.0, start_offset=0):
     """Yield up to `total` paper dicts for an arXiv query, paginating with
     the API's `start` parameter (beginning at `start_offset`). Stops early
@@ -83,26 +128,9 @@ def search_paginated(query, total, page_size=200, delay=3.0, start_offset=0):
             "sortBy": "submittedDate",
             "sortOrder": "descending",
         }
-
-        papers = []
-        for attempt in range(3):
-            _throttle(delay)
-            try:
-                resp = requests.get(API_URL, params=params, timeout=60)
-                resp.raise_for_status()
-                papers = _parse_entries(resp.text)
-            except requests.RequestException as exc:
-                log.warning("arXiv page fetch failed (start=%s, attempt=%s): %s", start, attempt + 1, exc)
-                papers = []
-
-            if papers:
-                break
-            log.warning("arXiv page empty (start=%s, attempt=%s)", start, attempt + 1)
-            if attempt < 2:
-                time.sleep(5)
-
+        papers = _fetch_page(params, delay)
         if not papers:
-            log.info("arXiv returned no results after retries (start=%s); stopping", start)
+            log.info("arXiv end of results (start=%s); stopping", start)
             break
 
         for paper in papers:

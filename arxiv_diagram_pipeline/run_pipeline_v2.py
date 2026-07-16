@@ -63,7 +63,11 @@ def field_display(field_key):
 # --------------------------------------------------------------------------
 
 def harvest_loop(db, stop, state):
-    """Keep enough registered papers in the funnel to hit the target."""
+    """Keep a rolling buffer of registered papers in the funnel.
+
+    Deliberately does NOT front-load the whole projected need: bursting deep
+    pagination gets us 429-throttled by arXiv. The downloader consumes ~20
+    papers/min at most, so a ~1500-paper buffer is hours of runway."""
     while not stop.is_set():
         c = db.counts()
         remaining = state["target"] - c["labeled"]
@@ -73,28 +77,39 @@ def harvest_loop(db, stop, state):
         if c["papers_downloaded"] >= 30 and c["labeled"] >= 30:
             est_yield = max(0.5, c["labeled"] / c["papers_downloaded"])
         needed = int(remaining / est_yield * 1.3)
-        if c["papers_pending"] < needed:
-            deficit = needed - c["papers_pending"]
-            per_field = min(800, max(20, deficit // len(config.FIELDS) + 1))
-            added_total = 0
-            for key, field in config.FIELDS.items():
-                if stop.is_set():
-                    return
-                offset = int(db.get_meta(f"harvest_offset_{key}", "0"))
+        buffer_target = min(needed, 1500)
+        if c["papers_pending"] >= buffer_target:
+            stop.wait(60)
+            continue
+        added_total = 0
+        throttled = False
+        for key, field in config.FIELDS.items():
+            if stop.is_set():
+                return
+            offset = int(db.get_meta(f"harvest_offset_{key}", "0"))
+            try:
                 papers = list(arxiv_client.search_paginated(
-                    field["query"], per_field, page_size=200,
+                    field["query"], 200, page_size=200,
                     delay=config.ARXIV_DELAY_SECONDS, start_offset=offset))
-                added = db.add_papers(key, papers)
-                db.set_meta(f"harvest_offset_{key}", offset + len(papers))
-                added_total += added
-                log.info("[harvest] %s: +%d papers (offset now %d)",
-                         field["name"], added, offset + len(papers))
-            if added_total == 0:
-                log.warning("[harvest] arXiv supply exhausted for all fields")
-                state["harvest_exhausted"] = True
-                stop.wait(600)
+            except arxiv_client.TemporarilyUnavailable as exc:
+                log.warning("[harvest] %s: %s", field["name"], exc)
+                throttled = True
+                continue
+            added = db.add_papers(key, papers)
+            db.set_meta(f"harvest_offset_{key}", offset + len(papers))
+            added_total += added
+            log.info("[harvest] %s: +%d papers (offset now %d)",
+                     field["name"], added, offset + len(papers))
+        if throttled:
+            log.warning("[harvest] arXiv is throttling us; next round in 10 min")
+            stop.wait(600)
+        elif added_total == 0:
+            log.warning("[harvest] arXiv supply exhausted for all fields")
+            state["harvest_exhausted"] = True
+            stop.wait(600)
         else:
-            stop.wait(120)
+            state["harvest_exhausted"] = False
+            stop.wait(60)
 
 
 def download_loop(db, stop, state):
@@ -127,8 +142,14 @@ def download_loop(db, stop, state):
                 n_pages = min(n_pages, config.MAX_PAGES_PER_PAPER)
             db.mark_paper_downloaded(paper["arxiv_id"], n_pages)
         except Exception as exc:
-            db.mark_paper_failed(paper["arxiv_id"], exc)
-            log.warning("[download] %s failed: %s", paper["arxiv_id"], exc)
+            if "429" in str(exc):
+                # arXiv rate limit — leave the paper queued and cool off
+                log.warning("[download] arXiv rate-limited; pausing 2 min "
+                            "(%s stays queued)", paper["arxiv_id"])
+                stop.wait(120)
+            else:
+                db.mark_paper_failed(paper["arxiv_id"], exc)
+                log.warning("[download] %s failed: %s", paper["arxiv_id"], exc)
 
 
 # --------------------------------------------------------------------------
