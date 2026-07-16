@@ -14,5 +14,10 @@ arxiv_diagram_pipeline/data/
 arxiv_diagram_pipeline/state.db*
 arxiv_diagram_pipeline/logs/
 
+# ML: derived artifacts (regenerable from manifests + scripts)
+arxiv_diagram_pipeline/ml/.venv/
+arxiv_diagram_pipeline/ml/cache/
+arxiv_diagram_pipeline/ml/preds/
+
 # macOS
 .DS_Store

@@ -1,0 +1,18 @@
+{
+  "name": "heuristics_gbt",
+  "kind": "heuristic",
+  "config": {
+    "features": 10,
+    "model": "HistGradientBoosting"
+  },
+  "val": {
+    "acc": 0.7749,
+    "f1": 0.8349,
+    "precision": 0.7657,
+    "recall": 0.9178,
+    "acc4": 0.7728
+  },
+  "manifest_sha": "241a5c791341c6e3",
+  "timestamp": "2026-07-16 17:48:14",
+  "notes": "4cls-val-acc 0.7728"
+}

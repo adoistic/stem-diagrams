@@ -1,0 +1,66 @@
+{
+  "model": "heuristic",
+  "model_name": "heuristic (PIL local pre-filter, mirrors pipeline/image_filter.py)",
+  "params_millions": 0.0,
+  "n_images": 128,
+  "timestamp": 1784204340.876788,
+  "machine": "macOS-15.6.1-arm64-arm-64bit | torch 2.13.0",
+  "mps": {
+    "load_seconds": 2.9199873097240925e-07,
+    "single_image": {
+      "p50_ms": 5.3414165013236925,
+      "p95_ms": 8.00362134541501,
+      "mean_ms": 5.480688900085322,
+      "n_reps": 30
+    },
+    "batch": {
+      "32": {
+        "images_per_sec": 153.10770018928838,
+        "reps_images_per_sec": [
+          143.932351576023,
+          144.8550155627276,
+          170.53573342911454
+        ]
+      },
+      "128": {
+        "images_per_sec": 121.7509003177475,
+        "reps_images_per_sec": [
+          136.00807016520955,
+          140.82541018559886,
+          88.41922060243408
+        ]
+      }
+    },
+    "peak_rss_mb": 205.9375,
+    "note": "heuristic is pure PIL/stdlib (no torch); device is not applicable, numbers are identical under mps/cpu -- kept for JSON schema consistency with the torch backbones"
+  },
+  "cpu": {
+    "load_seconds": 2.9199873097240925e-07,
+    "single_image": {
+      "p50_ms": 5.3414165013236925,
+      "p95_ms": 8.00362134541501,
+      "mean_ms": 5.480688900085322,
+      "n_reps": 30
+    },
+    "batch": {
+      "32": {
+        "images_per_sec": 153.10770018928838,
+        "reps_images_per_sec": [
+          143.932351576023,
+          144.8550155627276,
+          170.53573342911454
+        ]
+      },
+      "128": {
+        "images_per_sec": 121.7509003177475,
+        "reps_images_per_sec": [
+          136.00807016520955,
+          140.82541018559886,
+          88.41922060243408
+        ]
+      }
+    },
+    "peak_rss_mb": 205.9375,
+    "note": "heuristic is pure PIL/stdlib (no torch); device is not applicable, numbers are identical under mps/cpu -- kept for JSON schema consistency with the torch backbones"
+  }
+}

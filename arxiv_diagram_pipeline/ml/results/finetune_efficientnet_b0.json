@@ -1,0 +1,23 @@
+{
+  "name": "finetune_efficientnet_b0",
+  "kind": "finetune",
+  "config": {
+    "model": "efficientnet_b0.ra_in1k",
+    "epochs": 8,
+    "batch": 32,
+    "lr": 0.0001,
+    "device": "mps"
+  },
+  "val": {
+    "acc": 0.7389,
+    "f1": 0.7784,
+    "precision": 0.8213,
+    "recall": 0.7397,
+    "acc4": 0.6837,
+    "epoch": 3,
+    "train_minutes": 14.1
+  },
+  "manifest_sha": "241a5c791341c6e3",
+  "timestamp": "2026-07-16 19:26:07",
+  "notes": "best epoch 3, 14.1 min on mps"
+}
