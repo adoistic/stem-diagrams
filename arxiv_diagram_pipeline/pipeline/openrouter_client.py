@@ -13,9 +13,9 @@ log = logging.getLogger(__name__)
 
 RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 
-# Flipped to False at runtime if the provider rejects the reasoning parameter,
-# so we only pay the failed-request tax once per process.
-_reasoning_param_ok = True
+# Models that rejected the reasoning parameter at runtime — tracked per model
+# so one provider's rejection doesn't disable it for the others.
+_reasoning_rejected = set()
 
 
 class MissingAPIKeyError(RuntimeError):
@@ -27,37 +27,37 @@ class CreditsExhaustedError(RuntimeError):
     the pipeline should save state and stop cleanly."""
 
 
-def _reasoning_payload():
+def _reasoning_payload(model):
     effort = (config.REASONING_EFFORT or "").lower()
-    if not _reasoning_param_ok or effort in ("", "default"):
+    if model in _reasoning_rejected or effort in ("", "default"):
         return None
     if effort == "none":
         return {"enabled": False}
     return {"effort": effort}
 
 
-def chat_with_meta(messages, retries=4):
+def chat_with_meta(messages, retries=4, model=None):
     """Send a chat request; returns (reply_text, cost_usd).
 
     Deliberately no max_tokens: reasoning models burn an explicit budget on
     hidden reasoning and then return empty content. The provider default
     output limit is the right ceiling.
     """
-    global _reasoning_param_ok
     if not config.OPENROUTER_API_KEY:
         raise MissingAPIKeyError("OPENROUTER_API_KEY is empty — fill it in .env")
 
+    model = model or config.OPENROUTER_MODEL
     headers = {
         "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
     for attempt in range(1, retries + 1):
         payload = {
-            "model": config.OPENROUTER_MODEL,
+            "model": model,
             "messages": messages,
             "usage": {"include": True},
         }
-        reasoning = _reasoning_payload()
+        reasoning = _reasoning_payload(model)
         if reasoning:
             payload["reasoning"] = reasoning
         try:
@@ -68,11 +68,11 @@ def chat_with_meta(messages, retries=4):
                 raise CreditsExhaustedError(
                     f"OpenRouter credits exhausted (HTTP 402): {resp.text[:200]}")
             if resp.status_code == 400 and reasoning and "reasoning" in resp.text.lower():
-                # Provider doesn't accept the reasoning parameter — drop it
-                # for the rest of the run and retry immediately.
-                log.warning("Provider rejected reasoning param; disabling it. (%s)",
-                            resp.text[:150])
-                _reasoning_param_ok = False
+                # This provider doesn't accept the reasoning parameter — drop
+                # it for this model for the rest of the run and retry now.
+                log.warning("%s rejected reasoning param; disabling it. (%s)",
+                            model, resp.text[:150])
+                _reasoning_rejected.add(model)
                 continue
             if resp.status_code >= 400 and resp.status_code not in RETRYABLE_STATUS:
                 raise requests.HTTPError(
@@ -110,9 +110,9 @@ def chat_with_meta(messages, retries=4):
             time.sleep(wait)
 
 
-def chat(messages, retries=4):
+def chat(messages, retries=4, model=None):
     """Send a chat request to the configured OpenRouter model, return reply text."""
-    content, _cost = chat_with_meta(messages, retries=retries)
+    content, _cost = chat_with_meta(messages, retries=retries, model=model)
     return content
 
 

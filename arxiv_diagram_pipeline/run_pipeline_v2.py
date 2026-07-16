@@ -156,7 +156,26 @@ def download_loop(db, stop, state):
 # pool workers (return results; ALL DB writes happen on the main thread)
 # --------------------------------------------------------------------------
 
-def detect_worker(job):
+def screen_worker(job):
+    """Stage 1: free local graphics check, then the cheap screening model."""
+    import fitz
+
+    pdf = pdf_path_of(job["field"], job["arxiv_id"])
+    with fitz.open(pdf) as doc:
+        page = doc[job["page_no"] - 1]
+        has_graphics = bool(page.get_images()) or bool(page.get_drawings())
+    if not has_graphics:
+        # pure text page (references, proofs) — a diagram needs graphics objects
+        return {"has_diagram": False, "skipped": "no-graphics"}, 0.0
+    uri = page_renderer.render_page_uri(
+        pdf, job["page_no"], config.RENDER_DPI, config.JPEG_QUALITY)
+    return diagram_detector.detect_uri(
+        uri, job["page_no"], job["title"], field_display(job["field"]),
+        model=config.SCREEN_MODEL)
+
+
+def confirm_worker(job):
+    """Stage 2: the main model re-judges pages the screener flagged."""
     pdf = pdf_path_of(job["field"], job["arxiv_id"])
     uri = page_renderer.render_page_uri(
         pdf, job["page_no"], config.RENDER_DPI, config.JPEG_QUALITY)
@@ -209,11 +228,22 @@ def reject_dir_move(db_field, file_path):
         return Path(file_path)
 
 
-def handle_detect(db, job, fut):
+def handle_screen(db, job, fut):
     result, exc = _result_or_fatal(fut)
     if exc is not None:
         db.set_page_failed(job["arxiv_id"], job["page_no"], exc)
-        log.warning("[detect] %s p.%d failed: %s", job["arxiv_id"], job["page_no"], exc)
+        log.warning("[screen] %s p.%d failed: %s", job["arxiv_id"], job["page_no"], exc)
+        return
+    detection, cost = result
+    db.set_page_screened(job["arxiv_id"], job["page_no"],
+                         bool(detection["has_diagram"]), json.dumps(detection), cost)
+
+
+def handle_confirm(db, job, fut):
+    result, exc = _result_or_fatal(fut)
+    if exc is not None:
+        db.set_page_failed(job["arxiv_id"], job["page_no"], exc)
+        log.warning("[confirm] %s p.%d failed: %s", job["arxiv_id"], job["page_no"], exc)
         return
     detection, cost = result
     db.set_page_detected(job["arxiv_id"], job["page_no"],
@@ -406,14 +436,18 @@ def run(args):
     last_status = 0.0
 
     def llm_inflight():
-        return sum(1 for k, _ in inflight.values() if k in ("detect", "label"))
+        return sum(1 for k, _ in inflight.values()
+                   if k in ("screen", "confirm", "label"))
 
     try:
         while True:
             for fut in [f for f in list(inflight) if f.done()]:
                 kind, payload = inflight.pop(fut)
-                if kind == "detect":
-                    handle_detect(db, payload, fut)
+                if kind == "screen":
+                    handle_screen(db, payload, fut)
+                    inflight_pages.discard((payload["arxiv_id"], payload["page_no"]))
+                elif kind == "confirm":
+                    handle_confirm(db, payload, fut)
                     inflight_pages.discard((payload["arxiv_id"], payload["page_no"]))
                 elif kind == "label":
                     handle_label(db, payload, fut)
@@ -427,7 +461,8 @@ def run(args):
                 log.info("TARGET REACHED: %d labeled diagrams", labeled)
                 break
 
-            # fill LLM slots — labels first (each one directly advances target)
+            # fill LLM slots — labels first (each one directly advances target),
+            # then confirms (closest to product), then screens
             slots = args.max_workers * 2 - llm_inflight()
             if slots > 0:
                 for job in db.pending_images(slots, exclude=inflight_images):
@@ -435,9 +470,14 @@ def run(args):
                     inflight[llm_pool.submit(label_worker, job)] = ("label", job)
                     slots -= 1
             if slots > 0:
+                for job in db.screened_pages(slots, exclude=inflight_pages):
+                    inflight_pages.add((job["arxiv_id"], job["page_no"]))
+                    inflight[llm_pool.submit(confirm_worker, job)] = ("confirm", job)
+                    slots -= 1
+            if slots > 0:
                 for job in db.pending_pages(slots, exclude=inflight_pages):
                     inflight_pages.add((job["arxiv_id"], job["page_no"]))
-                    inflight[llm_pool.submit(detect_worker, job)] = ("detect", job)
+                    inflight[llm_pool.submit(screen_worker, job)] = ("screen", job)
 
             # batch diagram pages for OCR
             unbatched = db.unbatched_diagram_pages(config.OCR_BATCH_PAGES * 4)

@@ -156,10 +156,33 @@ class StateDB:
         return out[:limit]
 
     def set_page_detected(self, arxiv_id, page_no, has_diagram, detect_json, cost):
+        # cost accumulates: a page may carry screen cost + confirm cost
         self._exec(
-            "UPDATE pages SET status='done', has_diagram=?, detect_json=?, cost=? "
-            "WHERE arxiv_id=? AND page_no=?",
+            "UPDATE pages SET status='done', has_diagram=?, detect_json=?, "
+            "cost=cost+? WHERE arxiv_id=? AND page_no=?",
             (1 if has_diagram else 0, detect_json, cost, arxiv_id, page_no))
+
+    def set_page_screened(self, arxiv_id, page_no, positive, screen_json, cost):
+        """Stage-1 screen result: negatives are final, positives await confirm."""
+        if positive:
+            self._exec(
+                "UPDATE pages SET status='screen_pos', detect_json=?, cost=cost+? "
+                "WHERE arxiv_id=? AND page_no=?",
+                (screen_json, cost, arxiv_id, page_no))
+        else:
+            self._exec(
+                "UPDATE pages SET status='done', has_diagram=0, detect_json=?, "
+                "cost=cost+? WHERE arxiv_id=? AND page_no=?",
+                (screen_json, cost, arxiv_id, page_no))
+
+    def screened_pages(self, limit, exclude=()):
+        rows = self._all(
+            "SELECT g.arxiv_id, g.page_no, p.field, p.title FROM pages g "
+            "JOIN papers p ON p.arxiv_id = g.arxiv_id "
+            "WHERE g.status='screen_pos' ORDER BY g.arxiv_id, g.page_no LIMIT ?",
+            (limit + len(exclude),))
+        out = [dict(r) for r in rows if (r["arxiv_id"], r["page_no"]) not in exclude]
+        return out[:limit]
 
     def set_page_failed(self, arxiv_id, page_no, error):
         self._exec("UPDATE pages SET status='failed', error=? WHERE arxiv_id=? AND page_no=?",
@@ -298,7 +321,8 @@ class StateDB:
         c["papers_pending"] = self._val("SELECT COUNT(*) FROM papers WHERE status='pending'")
         c["papers_downloaded"] = self._val("SELECT COUNT(*) FROM papers WHERE status='downloaded'")
         c["pages_total"] = self._val("SELECT COUNT(*) FROM pages")
-        c["pages_pending"] = self._val("SELECT COUNT(*) FROM pages WHERE status='pending'")
+        c["pages_pending"] = self._val(
+            "SELECT COUNT(*) FROM pages WHERE status IN ('pending','screen_pos')")
         c["pages_diagram"] = self._val("SELECT COUNT(*) FROM pages WHERE has_diagram=1")
         c["batches_pending"] = self._val(
             "SELECT COUNT(*) FROM ocr_batches WHERE status IN ('building','pending')")
