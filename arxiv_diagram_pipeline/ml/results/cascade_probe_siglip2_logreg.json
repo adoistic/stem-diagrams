@@ -1,0 +1,17 @@
+{
+  "name": "cascade_probe_siglip2_logreg",
+  "kind": "cascade",
+  "config": {
+    "target_precision": 0.9
+  },
+  "val": {
+    "acc": 0.8429,
+    "precision": 0.9129,
+    "coverage": 1.0,
+    "f1": null,
+    "recall": null
+  },
+  "manifest_sha": "241a5c791341c6e3",
+  "timestamp": "2026-07-17 00:22:12",
+  "notes": "lo=0.35 hi=0.35 coverage=100%"
+}

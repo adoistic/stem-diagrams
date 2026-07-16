@@ -8,8 +8,10 @@ and compared against Mistral's. Requires render_pages.py output.
 """
 
 import argparse
+import csv
 import json
 import logging
+import random
 import time
 from pathlib import Path
 
@@ -34,6 +36,11 @@ def main():
     parser.add_argument("--imgsz", type=int, default=1024)
     parser.add_argument("--device", default="mps")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--val-cap", type=int, default=500,
+                        help="subsample val pages for threshold sweep (0=all)")
+    parser.add_argument("--gold-test-only", action="store_true",
+                        help="from test split, keep only the 120 gold pages "
+                             "(headline uses gold; no need to run all of test)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
                         datefmt="%H:%M:%S")
@@ -43,11 +50,30 @@ def main():
     weights = hf_hub_download(WEIGHTS_REPO, WEIGHTS_FILE)
     model = YOLOv10(weights)
 
-    rows = [r for r in common.load_pages_manifest() if r["split"] in args.splits]
+    all_rows = [r for r in common.load_pages_manifest() if r["split"] in args.splits]
+
+    gold_keys = set()
+    if args.gold_test_only:
+        with open(common.DATA_DIR / "gold_pages.csv") as f:
+            gold_keys = {(r["arxiv_id"], int(r["page_no"]))
+                         for r in csv.DictReader(f)}
+
+    rng = random.Random(20260716)
+    val_rows = [r for r in all_rows if r["split"] == "val"]
+    if args.val_cap and len(val_rows) > args.val_cap:
+        rng.shuffle(val_rows)
+        val_rows = val_rows[:args.val_cap]
+    test_rows = [r for r in all_rows if r["split"] == "test"]
+    if args.gold_test_only:
+        test_rows = [r for r in test_rows
+                     if (r["arxiv_id"], r["page_no"]) in gold_keys]
+
+    rows = val_rows + test_rows
     if args.limit:
         rows = rows[:args.limit]
     rows = [r for r in rows if page_image(r).exists()]
-    log.info("detector over %d pages (%s)", len(rows), "+".join(args.splits))
+    log.info("detector over %d pages (val %d + test %d)",
+             len(rows), len(val_rows), len(test_rows))
 
     out = {}
     t0 = time.time()

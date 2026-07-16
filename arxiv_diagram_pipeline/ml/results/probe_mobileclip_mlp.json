@@ -1,0 +1,19 @@
+{
+  "name": "probe_mobileclip_mlp",
+  "kind": "probe",
+  "config": {
+    "backbone": "mobileclip",
+    "head": "mlp"
+  },
+  "val": {
+    "acc": 0.811,
+    "f1": 0.8514,
+    "precision": 0.8306,
+    "recall": 0.8733,
+    "acc4": 0.7622,
+    "fit_seconds": 0.9
+  },
+  "manifest_sha": "241a5c791341c6e3",
+  "timestamp": "2026-07-16 21:42:03",
+  "notes": "4cls-val-acc 0.7622"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "probe_mobileclip_logreg",
+  "kind": "probe",
+  "config": {
+    "backbone": "mobileclip",
+    "head": "logreg"
+  },
+  "val": {
+    "acc": 0.8174,
+    "f1": 0.8442,
+    "precision": 0.8962,
+    "recall": 0.7979,
+    "acc4": 0.7558,
+    "fit_seconds": 0.1
+  },
+  "manifest_sha": "241a5c791341c6e3",
+  "timestamp": "2026-07-16 21:42:02",
+  "notes": "4cls-val-acc 0.7558"
+}

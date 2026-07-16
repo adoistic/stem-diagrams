@@ -1,0 +1,19 @@
+{
+  "name": "probe_dinov2_logreg",
+  "kind": "probe",
+  "config": {
+    "backbone": "dinov2",
+    "head": "logreg"
+  },
+  "val": {
+    "acc": 0.7792,
+    "f1": 0.8081,
+    "precision": 0.876,
+    "recall": 0.75,
+    "acc4": 0.7049,
+    "fit_seconds": 0.0
+  },
+  "manifest_sha": "241a5c791341c6e3",
+  "timestamp": "2026-07-16 21:42:00",
+  "notes": "4cls-val-acc 0.7049"
+}
