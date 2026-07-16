@@ -125,6 +125,11 @@ def extract_json(text):
     start = text.find("{")
     if start == -1:
         raise ValueError(f"No JSON object in LLM reply: {text[:200]!r}")
+    # LaTeX guard: \rangle, \frac, \beta contain JSON-VALID escapes (\r \f \b)
+    # that would silently become control characters and eat a letter. A real
+    # carriage return/form feed/backspace escape is never followed by a
+    # letter, so double the backslash in that case.
+    text = re.sub(r'\\([bfr])(?=[a-zA-Z])', r'\\\\\1', text)
     # strict=False tolerates raw control characters (literal newlines/tabs)
     # inside string values — a common LLM formatting slip when writing
     # multi-paragraph text into a JSON string instead of escaping "\n".

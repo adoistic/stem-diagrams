@@ -23,6 +23,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import shutil
 import signal
 import sys
@@ -565,7 +566,12 @@ def main():
     if args.export_only:
         do_export(StateDB())
         return
-    sys.exit(run(args))
+    code = run(args)
+    # Hard exit: in-flight worker threads can hold sockets with long timeouts
+    # (Mistral batch OCR: 900s) and would otherwise block interpreter shutdown
+    # for many minutes after a fatal stop. All state is already in SQLite.
+    logging.shutdown()
+    os._exit(code)
 
 
 if __name__ == "__main__":

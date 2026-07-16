@@ -1,6 +1,7 @@
 """Write the two Excel outputs: with-source and without-source."""
 
 import logging
+import re
 
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
@@ -8,6 +9,16 @@ from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
 log = logging.getLogger(__name__)
+
+# Control characters Excel refuses (keep \t \n \r); older labels may carry
+# them from LaTeX escapes mangled inside LLM JSON output.
+_ILLEGAL_XLSX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _clean(value):
+    if isinstance(value, str):
+        return _ILLEGAL_XLSX.sub("", value)
+    return value
 
 # (header, row key, column width)
 WITH_SOURCE_COLUMNS = [
@@ -45,7 +56,7 @@ def _write(rows, columns, dest_path):
     wrap = Alignment(wrap_text=True, vertical="top")
     for r, row in enumerate(rows, start=2):
         for c, (_header, key, _w) in enumerate(columns, start=1):
-            cell = ws.cell(row=r, column=c, value=row.get(key, ""))
+            cell = ws.cell(row=r, column=c, value=_clean(row.get(key, "")))
             cell.alignment = wrap
     ws.freeze_panes = "A2"
     wb.save(dest_path)
@@ -85,7 +96,7 @@ def _new_write_only_sheet(columns):
 def _append_write_only_row(ws, columns, row, wrap):
     cells = []
     for _header, key, _width in columns:
-        cell = WriteOnlyCell(ws, value=row.get(key, ""))
+        cell = WriteOnlyCell(ws, value=_clean(row.get(key, "")))
         cell.alignment = wrap
         cells.append(cell)
     ws.append(cells)
@@ -122,7 +133,7 @@ def export_v2(rows_iter, output_dir, total_hint=0):
     for values in without_rows:
         cells = []
         for value in values:
-            cell = WriteOnlyCell(ws2, value=value)
+            cell = WriteOnlyCell(ws2, value=_clean(value))
             cell.alignment = wrap
             cells.append(cell)
         ws2.append(cells)
