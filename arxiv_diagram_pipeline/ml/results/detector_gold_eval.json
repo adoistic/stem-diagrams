@@ -1,0 +1,27 @@
+{
+  "detector_gold": {
+    "acc": 0.6167,
+    "f1": 0.6102,
+    "precision": 0.439,
+    "recall": 1.0,
+    "acc_ci": [
+      0.5333,
+      0.7083
+    ],
+    "f1_ci": [
+      0.5,
+      0.7119
+    ],
+    "n": 120
+  },
+  "teacher_same_pages": {
+    "acc": 0.8,
+    "f1": 0.75,
+    "precision": 0.6,
+    "recall": 1.0
+  },
+  "thresholds": {
+    "conf_t": 0.2,
+    "area_frac": 0.03
+  }
+}

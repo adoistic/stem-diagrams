@@ -1,0 +1,11 @@
+{
+  "experiment": "confident-learning label cleaning (SigLIP2 embeddings, 4-class silver -> binary gold eval)",
+  "gold_test_n": 200, "ci_halfwidth": 0.048, "teacher_gold": 0.755,
+  "method": "5-fold OOF logreg probs on train; drop examples where model confidently disagrees with silver label",
+  "results": {
+    "full_baseline":      {"n_train": 2233, "logreg_gold_acc": 0.860, "mlp_gold_acc": 0.780},
+    "conservative_clean": {"n_train": 2138, "dropped_pct": 4,  "logreg_gold_acc": 0.850, "mlp_gold_acc": 0.810},
+    "aggressive_clean":   {"n_train": 1739, "dropped_pct": 22, "logreg_gold_acc": 0.830, "mlp_gold_acc": 0.845}
+  },
+  "conclusion": "Cleaning does not improve the noise-robust winner (logreg 86.0% -> 83-85%, flat-to-down within CI); it rescues the overfitting MLP (+6.5pt) but not past the simple baseline. Self-cleaning removes info, cannot add it. To beat 86% needs independent relabeling or more data, not noise removal. Production decision unchanged."
+}

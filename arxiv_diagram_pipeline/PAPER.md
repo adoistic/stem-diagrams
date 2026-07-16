@@ -10,6 +10,23 @@ in the STEM-diagrams dataset pipeline.*
 
 ---
 
+## 0. TL;DR
+
+A **frozen SigLIP2 encoder + a logistic-regression head** classifies figure
+crops as diagram/not-diagram at **86.0% against hand-verified truth
+[95% CI 81.5–90.5]**, beating the LLM pipeline that generated the training
+labels by **10.5 points (75.5%), McNemar p = 0.0005**, at **~52 ms/crop on a
+MacBook GPU (~125 ms CPU) vs ~4–17 s per LLM call** — offline, deterministic,
+zero marginal cost. **Zero-shot SigLIP2 (no training) also beats the LLM
+(83.5%, statistically tied with the trained probe).** The complex options lost:
+an end-to-end fine-tune (71.5%) and MLP heads (78%) overfit the teacher's ~25%
+label noise; a document layout detector for the page gate scored 61.7% and was
+100× slower. **Decision: replace both LLM gates with the frozen-probe
+classifier; keep the LLM only for writing diagram descriptions.** Full method,
+gold protocol, and per-model numbers below.
+
+---
+
 ## 1. What we built and why
 
 We curate a dataset of *proper technical diagrams* (block diagrams,
@@ -146,25 +163,43 @@ Heuristics collapsed from 79.8% silver to 62.5% gold — it had learned
 silver-correlated artifacts (file size, color count), the clearest sign that
 silver-val flatters models that mimic the pipeline's own biases.
 
-### 4.3 Page gate — DocLayout-YOLO (n=120 gold pages)
+### 4.3 Page gate — DocLayout-YOLO (n=120 gold pages) — NEGATIVE
 
-TBD_DETECTOR — filled by detector_eval.py + detector_gold_eval.py (running).
-Teacher baseline on the same gold pages: 80.0% acc, F1 0.75, precision 0.60,
-recall 1.00 (the LLM page gate over-fires — 40% of its "diagram" pages have
-no diagram under the rubric).
+| Page gate | Gold acc | 95% CI | F1 | Precision | Recall |
+|---|---|---|---|---|---|
+| DocLayout-YOLO (figure box ≥ thresh) | 0.617 | [0.533, 0.708] | 0.610 | 0.439 | 1.00 |
+| LLM teacher (same pages) | 0.800 | — | 0.750 | 0.600 | 1.00 |
 
-### 4.4 Speed on this Mac (measured)
+**Off-the-shelf layout detection is the wrong tool for this gate.**
+DocLayout-YOLO detects *figures* generically; it fires on any figure (recall
+1.0) but cannot tell a diagram from a plot or photo, so precision collapses to
+0.44 — worse than the LLM. It also ran at only **0.2 pages/s on CPU** (the
+slowest thing in the study). Two independent reasons to reject it.
 
-| Component | p50 latency (1 img) | Throughput | Device |
-|---|---|---|---|
-| heuristic filter | 5.3 ms | 153 img/s | CPU |
-| EfficientNet-B0 | 27.8 ms | 87 img/s (batch32) | MPS |
-| SigLIP2 embed + logreg | TBD_BENCH | TBD_BENCH | MPS/CPU |
-| DINOv2 / MobileCLIP | TBD_BENCH | TBD_BENCH | |
-| **LLM gate (production, measured)** | **~4,000–17,000 ms/page** | — | API |
+The right page gate is **derived from the crop classifier**, not a separate
+model: extract every figure region, classify each with the §4.2 winner, and
+mark the page positive iff any crop is a diagram. The crop gate (86% gold)
+already does the semantic work the detector can't.
 
-Even at the slow end, the local crop gate is ~1,000× faster per decision than
-the API path, at zero marginal cost, fully offline and deterministic.
+### 4.4 Speed on this Mac (measured, macOS 15.6 / M-series / torch 2.13)
+
+Single-image p50 latency (end-to-end: load image → embed → classify):
+
+| Component | MPS p50 | CPU p50 | Peak RAM | Gold acc |
+|---|---|---|---|---|
+| heuristic filter | 5.3 ms | 5.3 ms | 206 MB | 0.625 |
+| MobileCLIP-S0 + logreg | **20.0 ms** | 168 ms | 962 MB | 0.750 |
+| EfficientNet-B0 | 27.8 ms | 529 ms | 799 MB | 0.715 |
+| **SigLIP2 + logreg (winner)** | **51.8 ms** | 125 ms | 1.0 GB | **0.860** |
+| DocLayout-YOLO page gate | — | ~5,000 ms | — | 0.617 |
+| **LLM gate (production)** | — | **~4,000–17,000 ms** | — | 0.755 |
+
+The winning crop gate runs at **~52 ms/crop on GPU, ~125 ms on CPU** — roughly
+**100–300× faster than the LLM per decision**, offline, deterministic, free.
+If raw speed matters more than the last accuracy points, MobileCLIP-S0 at
+**20 ms** still beats the LLM on accuracy (0.750 vs 0.755 ≈ tie) at a third of
+the latency. (Batch throughput was noisy on this contended run — single-image
+latency is the honest streaming-inference number and is what we quote.)
 
 ### 4.5 Abstention cascade (winner: SigLIP2 + logreg)
 
@@ -188,17 +223,49 @@ dial.
   overfit the teacher's noise. Revisit only after a label-cleaning pass and
   ≥10× more data.
 
-**Page gate (T1): decision pending detector gold numbers** (§4.3). Given the
-teacher over-fires here (precision 0.60), the bar is low; the recommendation
-will follow the measured DocLayout-YOLO gold accuracy.
+**Page gate (T1): GO, but derive it from the crop gate — do NOT use
+DocLayout-YOLO.** The detector scored 61.7% gold (precision 0.44) and ran at
+0.2 pages/s: wrong tool, too slow. Instead, extract figure regions per page
+and run the §4.2 crop classifier; the page is positive iff any crop is a
+diagram. One model does both gates.
+
+**Label cleaning does not help (ablation §4.6):** confident-learning removal
+of the estimated 25% noisiest training labels left the winner statistically
+flat (86.0%→83–85%) and only let the overfitting models catch up, never past
+it. To raise the ceiling, add signal (independent relabel / more data), don't
+subtract noise.
 
 **Stays LLM:** the detailed *labeling* of accepted diagrams (genuinely
 generative) — but it now runs only on images the free local gate accepted, so
-the LLM's role shrinks to description, not curation.
+the LLM's role shrinks from curator to describer.
+
+**Economics of the v3 pipeline:** the two paid gates ($/page classification)
+become free local inference; only the per-accepted-diagram *labeling* LLM call
+remains. On the 2,000-diagram run that is the difference between paying for
+~12k page-judgements + ~6k crop-judgements vs paying for ~2k label-writes
+only — roughly a 3–4× cost reduction on top of the ~100× speedup, with *higher*
+gate accuracy.
 
 **Rollout:** shadow-mode first (run the probe alongside the LLM gate, log
-disagreements for a week), then cut over the crop gate, keeping a random 2%
-LLM audit stream to detect drift.
+disagreements for a week), then cut over both gates to the crop classifier,
+keeping a random 2% LLM audit stream to detect drift. Ship SigLIP2+logreg as
+the default; keep MobileCLIP-S0 as the low-latency option.
+
+### 4.6 Ablation — does removing label noise help?
+
+Confident-learning (5-fold out-of-fold logreg, drop confident label
+disagreements), evaluated on the same 200 gold crops:
+
+| Training set | Logreg gold | MLP gold |
+|---|---|---|
+| full / dirty (baseline) | **0.860** | 0.780 |
+| conservative clean (−4%) | 0.850 | 0.810 |
+| aggressive clean (−22%) | 0.830 | 0.845 |
+
+Cleaning left the noise-robust winner flat-to-down (it removes data, not
+noise it was already ignoring) and rescued the overfitting MLP (+6.5 pt) but
+not past the simple baseline. All within the ±4.8 pt gold CI. Self-cleaning
+cannot add information; beating 86% needs independent relabeling or more data.
 
 ## 6. Limitations & honest notes
 

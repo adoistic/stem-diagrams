@@ -15,3 +15,4 @@
 | probe_mobileclip_mlp | probe | acc=0.811 f1=0.8514 p=0.8306 r=0.8733 | 4cls-val-acc 0.7622 |
 | cascade_probe_siglip2_logreg | cascade | acc=0.7495 f1=None p=0.9579 r=None | lo=0.55 hi=0.55 coverage=100% |
 | cascade_probe_siglip2_logreg | cascade | acc=0.8429 f1=None p=0.9129 r=None | lo=0.35 hi=0.35 coverage=100% |
+| detector_doclayout_yolo | detector | acc=0.792 f1=0.6389 p=0.4718 r=0.9892 | page gate vs silver; best conf=0.2 area=0.03; 0.2 pages/s |
