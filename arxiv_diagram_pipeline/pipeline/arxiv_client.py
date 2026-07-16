@@ -23,19 +23,9 @@ def _throttle(delay):
     _last_request = time.monotonic()
 
 
-def search(query, max_results, delay=3.0):
-    """Return a list of paper metadata dicts for an arXiv search query."""
-    _throttle(delay)
-    params = {
-        "search_query": query,
-        "start": 0,
-        "max_results": max_results,
-        "sortBy": "submittedDate",
-        "sortOrder": "descending",
-    }
-    resp = requests.get(API_URL, params=params, timeout=60)
-    resp.raise_for_status()
-    root = ET.fromstring(resp.text)
+def _parse_entries(xml_text):
+    """Parse an arXiv Atom feed into a list of paper metadata dicts."""
+    root = ET.fromstring(xml_text)
 
     papers = []
     for entry in root.findall("atom:entry", ATOM):
@@ -58,6 +48,73 @@ def search(query, max_results, delay=3.0):
             "pdf_url": pdf_url or f"https://arxiv.org/pdf/{arxiv_id}",
         })
     return papers
+
+
+def search(query, max_results, delay=3.0):
+    """Return a list of paper metadata dicts for an arXiv search query."""
+    _throttle(delay)
+    params = {
+        "search_query": query,
+        "start": 0,
+        "max_results": max_results,
+        "sortBy": "submittedDate",
+        "sortOrder": "descending",
+    }
+    resp = requests.get(API_URL, params=params, timeout=60)
+    resp.raise_for_status()
+    return _parse_entries(resp.text)
+
+
+def search_paginated(query, total, page_size=200, delay=3.0, start_offset=0):
+    """Yield up to `total` paper dicts for an arXiv query, paginating with
+    the API's `start` parameter (beginning at `start_offset`). Stops early
+    when arXiv returns no more results. Tolerates transient empty/error
+    responses."""
+    page_size = min(page_size, 1000)
+    seen_ids = set()
+    yielded = 0
+    start = start_offset
+
+    while yielded < total:
+        params = {
+            "search_query": query,
+            "start": start,
+            "max_results": page_size,
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+        }
+
+        papers = []
+        for attempt in range(3):
+            _throttle(delay)
+            try:
+                resp = requests.get(API_URL, params=params, timeout=60)
+                resp.raise_for_status()
+                papers = _parse_entries(resp.text)
+            except requests.RequestException as exc:
+                log.warning("arXiv page fetch failed (start=%s, attempt=%s): %s", start, attempt + 1, exc)
+                papers = []
+
+            if papers:
+                break
+            log.warning("arXiv page empty (start=%s, attempt=%s)", start, attempt + 1)
+            if attempt < 2:
+                time.sleep(5)
+
+        if not papers:
+            log.info("arXiv returned no results after retries (start=%s); stopping", start)
+            break
+
+        for paper in papers:
+            if paper["arxiv_id"] in seen_ids:
+                continue
+            seen_ids.add(paper["arxiv_id"])
+            yield paper
+            yielded += 1
+            if yielded >= total:
+                break
+
+        start += page_size
 
 
 def _candidate_urls(pdf_url, arxiv_id):

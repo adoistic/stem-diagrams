@@ -53,6 +53,16 @@ Build a pipeline in `/Users/siraj/STEM DIagrams` that:
 - [x] Cleaned ExFAT `._` AppleDouble sidecar files off the drive (`dot_clean -m`) for a tidy deliverable; verified real files (141 images, 42 PDFs) untouched.
 - [x] Report diagram count + Excel paths to user — DONE, see final response.
 
+### Phase 7: v2 scale-up — target 30,000 proper diagrams — in_progress
+Goal (user, 2026-07-16): quality-classify extracted images (blanks/non-diagrams slip through), 30k proper diagrams on external disk, parallelize (12-20 concurrent OpenRouter calls OK), survive credit-exhaustion/transient errors (resume exactly), rasterize PDFs in-memory, batch diagram pages into combined PDFs so Mistral OCR is ~1 call per ~30-50 pages (manifest maps batch page → source paper+page), delegate grunt work to Sonnet subagents.
+- [x] Architecture: SQLite state.db (local, WAL, autocommit) + threads: harvester/downloader + 20-worker LLM pool (detect+label) + 2-worker OCR pool; main thread = scheduler, sole DB writer alongside the two loops
+- [x] Sonnet subagents delivered: pipeline/image_filter.py (local blank/tiny/sliver reject, self-tested), arxiv_client.search_paginated (+start_offset added by me), excel_exporter.export_v2 (write_only, 30k rows) + status_v2.py stats CLI
+- [x] Core (Fable): state_db.py, pdf_batcher.py (vector-page batch PDFs, validate+size-split), mistral_ocr.ocr_pdf (batch, 402→CreditsExhausted), openrouter_client v2 (cost meta, reasoning effort w/ fallback, 402 fatal, NO max_tokens — user rule, now in ~/.claude/CLAUDE.md), diagram_labeler.classify_and_label (strict accept/reject + label in one call), run_pipeline_v2.py orchestrator
+- [x] Verified on real APIs: batched 3-page PDF (2 papers) OCR in ONE Mistral call, index→manifest mapping correct, images per page match v1 counts; reasoning effort=low accepted (14.9s detect, $0.0005); effort=none NOT faster (16-22s) → keep low
+- [x] Batch PDF size reality: ~900KB/page → OCR_BATCH_MAX_MB=20 guard (base64 +33%, Mistral cap 50MB) → effective batches ~20-25 pages
+- [ ] Integration test --target 12 (in progress): end-to-end + kill/resume verification
+- [ ] Commit + push, then launch 30k production run (nohup, Monitor), periodic checks, final export + report
+
 ## Key Decisions
 | Decision | Rationale |
 |----------|-----------|

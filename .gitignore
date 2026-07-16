@@ -10,5 +10,9 @@ venv/
 # Pipeline data (PDFs, page renders, OCR output, Excel exports)
 arxiv_diagram_pipeline/data/
 
+# v2 runtime state + logs
+arxiv_diagram_pipeline/state.db*
+arxiv_diagram_pipeline/logs/
+
 # macOS
 .DS_Store

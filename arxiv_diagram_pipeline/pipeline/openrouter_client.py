@@ -13,30 +13,67 @@ log = logging.getLogger(__name__)
 
 RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 
+# Flipped to False at runtime if the provider rejects the reasoning parameter,
+# so we only pay the failed-request tax once per process.
+_reasoning_param_ok = True
+
 
 class MissingAPIKeyError(RuntimeError):
     pass
 
 
-def chat(messages, max_tokens=2000, retries=4):
-    """Send a chat request to the configured OpenRouter model, return reply text."""
+class CreditsExhaustedError(RuntimeError):
+    """OpenRouter returned 402 — account credits are used up. Not retryable;
+    the pipeline should save state and stop cleanly."""
+
+
+def _reasoning_payload():
+    effort = (config.REASONING_EFFORT or "").lower()
+    if not _reasoning_param_ok or effort in ("", "default"):
+        return None
+    if effort == "none":
+        return {"enabled": False}
+    return {"effort": effort}
+
+
+def chat_with_meta(messages, retries=4):
+    """Send a chat request; returns (reply_text, cost_usd).
+
+    Deliberately no max_tokens: reasoning models burn an explicit budget on
+    hidden reasoning and then return empty content. The provider default
+    output limit is the right ceiling.
+    """
+    global _reasoning_param_ok
     if not config.OPENROUTER_API_KEY:
         raise MissingAPIKeyError("OPENROUTER_API_KEY is empty — fill it in .env")
 
-    payload = {
-        "model": config.OPENROUTER_MODEL,
-        "messages": messages,
-        "max_tokens": max_tokens,
-    }
     headers = {
         "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
     for attempt in range(1, retries + 1):
+        payload = {
+            "model": config.OPENROUTER_MODEL,
+            "messages": messages,
+            "usage": {"include": True},
+        }
+        reasoning = _reasoning_payload()
+        if reasoning:
+            payload["reasoning"] = reasoning
         try:
             resp = requests.post(
                 config.OPENROUTER_URL, json=payload, headers=headers, timeout=180
             )
+            if resp.status_code == 402:
+                raise CreditsExhaustedError(
+                    f"OpenRouter credits exhausted (HTTP 402): {resp.text[:200]}")
+            if resp.status_code == 400 and reasoning and "reasoning" in resp.text.lower():
+                # Provider doesn't accept the reasoning parameter — drop it
+                # for the rest of the run and retry immediately.
+                log.warning("Provider rejected reasoning param; disabling it. (%s)",
+                            resp.text[:150])
+                _reasoning_param_ok = False
+                continue
             if resp.status_code >= 400 and resp.status_code not in RETRYABLE_STATUS:
                 raise requests.HTTPError(
                     f"HTTP {resp.status_code} (non-retryable): {resp.text[:300]}"
@@ -47,14 +84,16 @@ def chat(messages, max_tokens=2000, retries=4):
                 raise requests.HTTPError(f"OpenRouter error: {data['error']}")
             content = data["choices"][0]["message"]["content"]
             if not content:
-                # Reasoning models can burn the whole max_tokens budget on the
-                # hidden "reasoning" field and return null content.
+                # Reasoning models occasionally return null content (e.g. the
+                # provider-side output cap was hit mid-reasoning).
                 finish = data["choices"][0].get("finish_reason")
                 raise requests.HTTPError(
-                    f"empty content (finish_reason={finish}) — likely ran out of "
-                    "max_tokens before producing a reply"
+                    f"empty content (finish_reason={finish})"
                 )
-            return content
+            cost = float((data.get("usage") or {}).get("cost") or 0.0)
+            return content, cost
+        except (CreditsExhaustedError, MissingAPIKeyError):
+            raise
         except requests.HTTPError as exc:
             if "non-retryable" in str(exc) or attempt == retries:
                 raise
@@ -71,6 +110,12 @@ def chat(messages, max_tokens=2000, retries=4):
             time.sleep(wait)
 
 
+def chat(messages, retries=4):
+    """Send a chat request to the configured OpenRouter model, return reply text."""
+    content, _cost = chat_with_meta(messages, retries=retries)
+    return content
+
+
 def extract_json(text):
     """Parse a JSON object out of an LLM reply (tolerates ```json fences and prose)."""
     text = text.strip()
@@ -83,5 +128,13 @@ def extract_json(text):
     # strict=False tolerates raw control characters (literal newlines/tabs)
     # inside string values — a common LLM formatting slip when writing
     # multi-paragraph text into a JSON string instead of escaping "\n".
-    obj, _ = json.JSONDecoder(strict=False).raw_decode(text[start:])
+    decoder = json.JSONDecoder(strict=False)
+    try:
+        obj, _ = decoder.raw_decode(text[start:])
+    except ValueError:
+        # Second common slip: raw LaTeX in string values ("\alpha", "\mathrm")
+        # — invalid JSON escapes. Double every backslash that doesn't start a
+        # valid escape sequence, then parse again.
+        repaired = re.sub(r'\\(?![\\/"bfnrtu])', r"\\\\", text[start:])
+        obj, _ = decoder.raw_decode(repaired)
     return obj

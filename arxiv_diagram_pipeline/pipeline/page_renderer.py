@@ -18,6 +18,15 @@ def render_page(pdf_path, page_number, dest_path, dpi=110, quality=80):
     return dest_path
 
 
+def render_page_uri(pdf_path, page_number, dpi=110, quality=80):
+    """Render one page (1-based) straight to a JPEG data URI — nothing touches
+    disk, so the v2 pipeline can rasterize on the fly inside worker threads."""
+    with fitz.open(pdf_path) as doc:
+        pix = doc[page_number - 1].get_pixmap(dpi=dpi)
+        jpg = pix.tobytes("jpeg", jpg_quality=quality)
+    return "data:image/jpeg;base64," + base64.b64encode(jpg).decode()
+
+
 def to_data_uri(image_path):
     b64 = base64.b64encode(image_path.read_bytes()).decode()
     suffix = image_path.suffix.lstrip(".").lower()

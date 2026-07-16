@@ -29,17 +29,25 @@ If there are no diagrams, use "diagrams": [].
 
 
 def detect(page_image_path, page_number, paper_title, field_name):
+    result, _cost = detect_uri(
+        to_data_uri(page_image_path), page_number, paper_title, field_name)
+    return result
+
+
+def detect_uri(page_data_uri, page_number, paper_title, field_name):
+    """Like detect(), but takes an already-rendered data URI (v2 in-memory path).
+    Returns (result_dict, cost_usd)."""
     prompt = DETECT_PROMPT.format(page=page_number, title=paper_title, field=field_name)
     messages = [{
         "role": "user",
         "content": [
             {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": to_data_uri(page_image_path)}},
+            {"type": "image_url", "image_url": {"url": page_data_uri}},
         ],
     }]
-    reply = openrouter_client.chat(messages, max_tokens=3500)
+    reply, cost = openrouter_client.chat_with_meta(messages)
     result = openrouter_client.extract_json(reply)
     result.setdefault("has_diagram", False)
     result.setdefault("diagrams", [])
     result.setdefault("page_summary", "")
-    return result
+    return result, cost
