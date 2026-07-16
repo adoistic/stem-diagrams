@@ -44,7 +44,7 @@ def label(image_path, page_number, paper_title, field_name, page_text, diagram_c
             {"type": "image_url", "image_url": {"url": to_data_uri(image_path)}},
         ],
     }]
-    reply = openrouter_client.chat(messages, max_tokens=3000)
+    reply = openrouter_client.chat(messages, max_tokens=4500)
     result = openrouter_client.extract_json(reply)
     result.setdefault("diagram_type", "")
     result.setdefault("title", "")

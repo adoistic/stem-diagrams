@@ -16,7 +16,7 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "xiaomi/mimo-v2.5-pro")
 MISTRAL_OCR_URL = "https://api.mistral.ai/v1/ocr"
 MISTRAL_OCR_MODEL = os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest")
 
-DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR = Path(os.getenv("DATA_DIR", "").strip() or (PROJECT_ROOT / "data"))
 PAPERS_DIR = DATA_DIR / "papers"
 OUTPUT_DIR = DATA_DIR / "output"
 

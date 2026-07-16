@@ -44,7 +44,10 @@ def iter_papers(field_keys):
         for pdir in sorted(field_dir.iterdir()):
             meta_path = pdir / "metadata.json"
             if (pdir / "paper.pdf").exists() and meta_path.exists():
-                yield key, pdir, json.loads(meta_path.read_text())
+                try:
+                    yield key, pdir, json.loads(meta_path.read_text())
+                except (OSError, ValueError) as exc:
+                    log.error("[iter_papers] unreadable %s (skipping): %s", meta_path, exc)
 
 
 def stage_download(field_keys, papers_per_field):
@@ -97,33 +100,37 @@ def stage_detect(field_keys, max_pages):
         pdf_path = pdir / "paper.pdf"
         pages_dir = pdir / "pages"
         analysis_dir = pdir / "analysis"
-        n_pages = page_renderer.page_count(pdf_path)
+        try:
+            n_pages = page_renderer.page_count(pdf_path)
+        except Exception as exc:
+            log.error("[detect] %s: can't open PDF (skipping): %s", meta["arxiv_id"], exc)
+            continue
         if max_pages:
             n_pages = min(n_pages, max_pages)
         for page in range(1, n_pages + 1):
             out_path = analysis_dir / f"page_{page:03d}.json"
             if out_path.exists():
                 continue
-            img_path = pages_dir / f"page_{page:03d}.jpg"
-            if not img_path.exists():
-                pages_dir.mkdir(exist_ok=True)
-                page_renderer.render_page(
-                    pdf_path, page, img_path, config.RENDER_DPI, config.JPEG_QUALITY
-                )
             try:
+                img_path = pages_dir / f"page_{page:03d}.jpg"
+                if not img_path.exists():
+                    pages_dir.mkdir(exist_ok=True)
+                    page_renderer.render_page(
+                        pdf_path, page, img_path, config.RENDER_DPI, config.JPEG_QUALITY
+                    )
                 result = diagram_detector.detect(
                     img_path, page, meta["title"], config.FIELDS[key]["name"]
                 )
+                analysis_dir.mkdir(exist_ok=True)
+                out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+                log.info(
+                    "[detect] %s p.%d/%d has_diagram=%s",
+                    meta["arxiv_id"], page, n_pages, result["has_diagram"],
+                )
             except Exception as exc:
                 _abort_if_missing_key(exc)
-                log.error("[detect] %s p.%d failed: %s", meta["arxiv_id"], page, exc)
-                continue
-            analysis_dir.mkdir(exist_ok=True)
-            out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
-            log.info(
-                "[detect] %s p.%d/%d has_diagram=%s",
-                meta["arxiv_id"], page, n_pages, result["has_diagram"],
-            )
+                log.error("[detect] %s p.%d failed (will retry next run): %s",
+                          meta["arxiv_id"], page, exc)
 
 
 def iter_diagram_pages(field_keys):
@@ -133,7 +140,11 @@ def iter_diagram_pages(field_keys):
         if not analysis_dir.is_dir():
             continue
         for a_path in sorted(analysis_dir.glob("page_*.json")):
-            analysis = json.loads(a_path.read_text())
+            try:
+                analysis = json.loads(a_path.read_text())
+            except (OSError, ValueError) as exc:
+                log.error("[iter_diagram_pages] unreadable %s (skipping): %s", a_path, exc)
+                continue
             if analysis.get("has_diagram"):
                 page = int(a_path.stem.split("_")[1])
                 yield key, pdir, meta, page, analysis
@@ -151,23 +162,23 @@ def stage_ocr(field_keys):
         page_img = pdir / "pages" / f"page_{page:03d}.jpg"
         try:
             response = mistral_ocr.ocr_page(page_img)
+            ocr_dir.mkdir(exist_ok=True)
+            diagrams_dir.mkdir(exist_ok=True)
+            ocr_json.write_text(json.dumps(response, indent=2, ensure_ascii=False))
+            markdown = mistral_ocr.extract_markdown(response)
+            (ocr_dir / f"page_{page:03d}.md").write_text(markdown)
+            saved = mistral_ocr.save_images(response, diagrams_dir, f"page_{page:03d}")
+            if not saved:
+                # OCR found no embedded images — keep the full page render so the
+                # detected diagram still gets labeled.
+                fallback = diagrams_dir / f"page_{page:03d}_full.jpg"
+                shutil.copyfile(page_img, fallback)
+                saved = [fallback]
+            log.info("[ocr] %s p.%d → %d image(s)", meta["arxiv_id"], page, len(saved))
         except Exception as exc:
             _abort_if_missing_key(exc)
-            log.error("[ocr] %s p.%d failed: %s", meta["arxiv_id"], page, exc)
-            continue
-        ocr_dir.mkdir(exist_ok=True)
-        diagrams_dir.mkdir(exist_ok=True)
-        ocr_json.write_text(json.dumps(response, indent=2, ensure_ascii=False))
-        markdown = mistral_ocr.extract_markdown(response)
-        (ocr_dir / f"page_{page:03d}.md").write_text(markdown)
-        saved = mistral_ocr.save_images(response, diagrams_dir, f"page_{page:03d}")
-        if not saved:
-            # OCR found no embedded images — keep the full page render so the
-            # detected diagram still gets labeled.
-            fallback = diagrams_dir / f"page_{page:03d}_full.jpg"
-            shutil.copyfile(page_img, fallback)
-            saved = [fallback]
-        log.info("[ocr] %s p.%d → %d image(s)", meta["arxiv_id"], page, len(saved))
+            log.error("[ocr] %s p.%d failed (will retry next run): %s",
+                      meta["arxiv_id"], page, exc)
 
 
 def stage_label(field_keys):
@@ -177,7 +188,12 @@ def stage_label(field_keys):
         ocr_md = pdir / "ocr" / f"page_{page:03d}.md"
         if not ocr_md.exists():
             continue  # ocr stage hasn't processed this page yet
-        page_text = ocr_md.read_text()[: config.OCR_CONTEXT_CHARS]
+        try:
+            page_text = ocr_md.read_text()[: config.OCR_CONTEXT_CHARS]
+        except OSError as exc:
+            log.error("[label] %s p.%d: unreadable %s (skipping): %s",
+                      meta["arxiv_id"], page, ocr_md, exc)
+            continue
         diagram_context = "\n".join(
             f"- {d.get('type', 'diagram')}: {d.get('description', '')}"
             for d in analysis.get("diagrams", [])
@@ -197,15 +213,14 @@ def stage_label(field_keys):
                     img_path, page, meta["title"], config.FIELDS[key]["name"],
                     page_text, diagram_context,
                 )
+                result["image_file"] = img_path.name
+                labels_dir.mkdir(exist_ok=True)
+                out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+                log.info("[label] %s %s — %.60s",
+                         meta["arxiv_id"], img_path.name, result["title"])
             except Exception as exc:
                 _abort_if_missing_key(exc)
-                log.error("[label] %s failed: %s", img_path.name, exc)
-                continue
-            result["image_file"] = img_path.name
-            labels_dir.mkdir(exist_ok=True)
-            out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
-            log.info("[label] %s %s — %.60s",
-                     meta["arxiv_id"], img_path.name, result["title"])
+                log.error("[label] %s failed (will retry next run): %s", img_path.name, exc)
 
 
 def stage_export(field_keys):
@@ -218,7 +233,11 @@ def stage_export(field_keys):
         if not labels_dir.is_dir():
             continue
         for label_path in sorted(labels_dir.glob("page_*.json")):
-            label_data = json.loads(label_path.read_text())
+            try:
+                label_data = json.loads(label_path.read_text())
+            except (OSError, ValueError) as exc:
+                log.error("[export] unreadable %s (skipping): %s", label_path, exc)
+                continue
             src_img = pdir / "diagrams" / label_data["image_file"]
             if not src_img.exists():
                 continue

@@ -37,13 +37,31 @@ def chat(messages, max_tokens=2000, retries=4):
             resp = requests.post(
                 config.OPENROUTER_URL, json=payload, headers=headers, timeout=180
             )
-            if resp.status_code in RETRYABLE_STATUS:
-                raise requests.HTTPError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+            if resp.status_code >= 400 and resp.status_code not in RETRYABLE_STATUS:
+                raise requests.HTTPError(
+                    f"HTTP {resp.status_code} (non-retryable): {resp.text[:300]}"
+                )
             resp.raise_for_status()
             data = resp.json()
             if "error" in data:
                 raise requests.HTTPError(f"OpenRouter error: {data['error']}")
-            return data["choices"][0]["message"]["content"]
+            content = data["choices"][0]["message"]["content"]
+            if not content:
+                # Reasoning models can burn the whole max_tokens budget on the
+                # hidden "reasoning" field and return null content.
+                finish = data["choices"][0].get("finish_reason")
+                raise requests.HTTPError(
+                    f"empty content (finish_reason={finish}) — likely ran out of "
+                    "max_tokens before producing a reply"
+                )
+            return content
+        except requests.HTTPError as exc:
+            if "non-retryable" in str(exc) or attempt == retries:
+                raise
+            wait = 2 ** attempt
+            log.warning("OpenRouter call failed (%s); retry %d/%d in %ds",
+                        exc, attempt, retries, wait)
+            time.sleep(wait)
         except (requests.RequestException, KeyError, ValueError) as exc:
             if attempt == retries:
                 raise
@@ -62,5 +80,8 @@ def extract_json(text):
     start = text.find("{")
     if start == -1:
         raise ValueError(f"No JSON object in LLM reply: {text[:200]!r}")
-    obj, _ = json.JSONDecoder().raw_decode(text[start:])
+    # strict=False tolerates raw control characters (literal newlines/tabs)
+    # inside string values — a common LLM formatting slip when writing
+    # multi-paragraph text into a JSON string instead of escaping "\n".
+    obj, _ = json.JSONDecoder(strict=False).raw_decode(text[start:])
     return obj

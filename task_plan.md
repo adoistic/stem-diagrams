@@ -41,6 +41,18 @@ Build a pipeline in `/Users/siraj/STEM DIagrams` that:
 - [x] git init, initial commit (root incl. planning files)
 - [x] Private GitHub repo created + pushed
 
+### Phase 6: Real run — goal: ≥ a few dozen labeled diagrams — in_progress
+- [x] Real API keys saved to .env (OpenRouter + Mistral, user-supplied 2026-07-16)
+- [x] DATA_DIR moved to external disk `/Volumes/One Touch/stem_diagrams_data` (config.py reads DATA_DIR env override); local test data (22MB, 6 papers) migrated over
+- [x] Sanity-check detect on real API (6 papers, 2 pages each) — found xiaomi/mimo-v2.5-pro is TEXT-ONLY on OpenRouter (404 "No endpoints found that support image input"). Switched OPENROUTER_MODEL to xiaomi/mimo-v2.5 (multimodal sibling, confirmed via /api/v1/models). Fixed retry bug: non-retryable 4xx were being retried.
+- [x] Sanity-check ocr + label + export on real API — worked end-to-end: 12 pages (6 papers × 2) → 3 diagram pages → 4 images → 4 real detailed labels → both Excel files written. Yield ≈ 1 diagram per 3 pages.
+- [x] Scale up: downloaded 42 papers (7/field), ran detect on first 6 pages of each. Hit 2 more bugs during the run, fixed both (resumable, no data lost): (1) per-page work wasn't fully wrapped in try/except — a transient ExFAT/USB mkdir ENOENT crashed the whole stage; now the full render+detect body is one try/except per page, logged and retried next run. (2) OpenRouter reasoning model can return null content when it exhausts max_tokens on hidden reasoning — now treated as a retryable HTTPError instead of crashing extract_json(None). Bumped max_tokens (detect 2000→3500, label 3000→4500) to reduce frequency. Detect stage ran ~3.5h across 248 pages (many transient network retries, all recovered) → **72 diagram pages found**.
+- [x] OCR stage: 72 diagram pages → 143 real images (filtered ExFAT `._` sidecar noise from raw count). Some pages over-segmented (one page → 18 image fragments, mostly sub-panels/time-series crops rather than distinct full diagrams) — noted as a data-quality caveat, not fixed (would need per-image size/content filtering, out of scope for this run).
+- [x] Label stage: hit a second crash from the same ExFAT/USB transient-I/O root cause, this time in `iter_diagram_pages()` (unprotected `json.loads` read) — swept the whole file and hardened every remaining unprotected read (`iter_papers`, `iter_diagram_pages`, `stage_export`, PDF page-count in `stage_detect`, OCR-markdown read in `stage_label`) so a flaky read logs+skips instead of killing the stage. Also patched `extract_json` to use `json.JSONDecoder(strict=False)`, tolerating raw control characters in LLM string output (fixes a chunk of, not all, JSON-parse failures — some models still emit invalid `\` escapes that need real JSON repair, out of scope). One run also silently stopped ~2/3 through after a real (very brief) drive disconnect — re-running (idempotent) picked up cleanly and finished. Final: **141/143 images labeled** (2 permanently stuck on invalid-escape JSON, acceptable given far exceeds goal).
+- [x] Export: 141 diagrams → both Excel files verified (13 cols with-source / 5 cols without-source, matching row counts, 141 flat anonymized images copied). Field spread: Aerospace 46, Telecom 25, Semiconductor 23, Utilities & Power 20, Robotics 16, Manufacturing 11.
+- [x] Cleaned ExFAT `._` AppleDouble sidecar files off the drive (`dot_clean -m`) for a tidy deliverable; verified real files (141 images, 42 PDFs) untouched.
+- [x] Report diagram count + Excel paths to user — DONE, see final response.
+
 ## Key Decisions
 | Decision | Rationale |
 |----------|-----------|

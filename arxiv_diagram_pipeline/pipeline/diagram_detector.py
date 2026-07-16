@@ -37,7 +37,7 @@ def detect(page_image_path, page_number, paper_title, field_name):
             {"type": "image_url", "image_url": {"url": to_data_uri(page_image_path)}},
         ],
     }]
-    reply = openrouter_client.chat(messages)
+    reply = openrouter_client.chat(messages, max_tokens=3500)
     result = openrouter_client.extract_json(reply)
     result.setdefault("has_diagram", False)
     result.setdefault("diagrams", [])
