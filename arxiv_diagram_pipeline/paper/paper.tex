@@ -1,4 +1,6 @@
 \documentclass[11pt]{article}
+% force pdfLaTeX on arXiv (needed with PNG graphics); skip under XeTeX/LuaTeX
+\ifdefined\pdfoutput\ifdefined\XeTeXversion\else\pdfoutput=1\fi\fi
 \usepackage[margin=1in]{geometry}
 \usepackage{graphicx}
 \usepackage{booktabs}
