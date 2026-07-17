@@ -1,0 +1,206 @@
+{
+  "gold": [
+    {
+      "model": "SigLIP2 + logreg",
+      "acc": 0.86,
+      "ci": [
+        0.815,
+        0.905
+      ],
+      "kind": "winner"
+    },
+    {
+      "model": "Zero-shot SigLIP2",
+      "acc": 0.835,
+      "ci": [
+        0.785,
+        0.885
+      ],
+      "kind": "zeroshot"
+    },
+    {
+      "model": "SigLIP2 + MLP",
+      "acc": 0.78,
+      "ci": [
+        0.725,
+        0.835
+      ],
+      "kind": "probe"
+    },
+    {
+      "model": "DINOv2 + MLP",
+      "acc": 0.765,
+      "ci": [
+        0.71,
+        0.825
+      ],
+      "kind": "probe"
+    },
+    {
+      "model": "LLM teacher (mimo-v2.5)",
+      "acc": 0.755,
+      "ci": [
+        0.7,
+        0.815
+      ],
+      "kind": "teacher"
+    },
+    {
+      "model": "MobileCLIP-S0 + MLP",
+      "acc": 0.75,
+      "ci": [
+        0.695,
+        0.81
+      ],
+      "kind": "probe"
+    },
+    {
+      "model": "DINOv3 + MLP",
+      "acc": 0.735,
+      "ci": [
+        0.675,
+        0.795
+      ],
+      "kind": "probe"
+    },
+    {
+      "model": "EfficientNet-B0 fine-tune",
+      "acc": 0.715,
+      "ci": [
+        0.65,
+        0.775
+      ],
+      "kind": "negative"
+    },
+    {
+      "model": "Heuristics (GBT)",
+      "acc": 0.625,
+      "ci": [
+        0.555,
+        0.695
+      ],
+      "kind": "negative"
+    }
+  ],
+  "silver_gold": [
+    {
+      "model": "SigLIP2+logreg",
+      "silver": 0.828,
+      "gold": 0.86
+    },
+    {
+      "model": "SigLIP2+MLP",
+      "silver": 0.858,
+      "gold": 0.78
+    },
+    {
+      "model": "DINOv3+MLP",
+      "silver": 0.82,
+      "gold": 0.735
+    },
+    {
+      "model": "MobileCLIP+MLP",
+      "silver": 0.811,
+      "gold": 0.75
+    },
+    {
+      "model": "DINOv2+MLP",
+      "silver": 0.794,
+      "gold": 0.765
+    },
+    {
+      "model": "Zero-shot",
+      "silver": 0.743,
+      "gold": 0.835
+    },
+    {
+      "model": "EfficientNet FT",
+      "silver": 0.732,
+      "gold": 0.715
+    },
+    {
+      "model": "Heuristics",
+      "silver": 0.775,
+      "gold": 0.625
+    }
+  ],
+  "speed": [
+    {
+      "model": "SigLIP2+logreg",
+      "mps_ms": 51.8,
+      "cpu_ms": 124.9,
+      "acc": 0.86
+    },
+    {
+      "model": "MobileCLIP-S0",
+      "mps_ms": 20.0,
+      "cpu_ms": 167.9,
+      "acc": 0.75
+    },
+    {
+      "model": "EfficientNet-B0",
+      "mps_ms": 27.8,
+      "cpu_ms": 528.5,
+      "acc": 0.715
+    },
+    {
+      "model": "Heuristics",
+      "mps_ms": 5.3,
+      "cpu_ms": 5.3,
+      "acc": 0.625
+    },
+    {
+      "model": "LLM gate",
+      "mps_ms": 10000,
+      "cpu_ms": 10000,
+      "acc": 0.755
+    }
+  ],
+  "funnel": [
+    {
+      "stage": "arXiv papers",
+      "n": 1183
+    },
+    {
+      "stage": "pages judged",
+      "n": 12266
+    },
+    {
+      "stage": "diagram pages",
+      "n": 2552
+    },
+    {
+      "stage": "figure crops",
+      "n": 5885
+    },
+    {
+      "stage": "accepted diagrams",
+      "n": 2000
+    }
+  ],
+  "ablation": {
+    "Full (dirty)": {
+      "logreg": 0.86,
+      "mlp": 0.78
+    },
+    "Conservative \u22124%": {
+      "logreg": 0.85,
+      "mlp": 0.81
+    },
+    "Aggressive \u221222%": {
+      "logreg": 0.83,
+      "mlp": 0.845
+    }
+  },
+  "headline": {
+    "winner_acc": 0.86,
+    "teacher_acc": 0.755,
+    "mcnemar_p": 0.0005,
+    "winner_ms_mps": 51.8,
+    "llm_ms": "4000-17000",
+    "gold_n": 200,
+    "dataset_n": 2000,
+    "papers": 1183,
+    "cost_usd": 20.36
+  }
+}

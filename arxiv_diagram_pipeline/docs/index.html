@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distilling an LLM Diagram-Curation Pipeline into Local Classifiers</title>
+<meta name="description" content="A frozen SigLIP2 + logistic-regression classifier beats the LLM that trained it by 10.5 points, at ~52ms/crop on a laptop. Data, code, and paper.">
+<style>
+  :root{
+    --ink:#1a1a2e; --muted:#5a6472; --line:#e6e9ee; --bg:#ffffff; --card:#f7f9fb;
+    --win:#2a9d8f; --win-d:#1f7a6f; --teach:#e76f51; --accent:#2a9d8f;
+    --maxw:960px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{--ink:#e8ecf1; --muted:#9aa4b2; --line:#2a3140; --bg:#0f1420; --card:#161d2b;}
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--win);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+  h1,h2,h3{line-height:1.25;font-weight:700}
+  h2{font-size:1.7rem;margin:0 0 .2em;letter-spacing:-.01em}
+  section{padding:64px 0;border-top:1px solid var(--line)}
+  section .lead{color:var(--muted);font-size:1.02rem;margin-top:0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em;
+    background:var(--card);padding:.12em .4em;border-radius:5px}
+  /* nav */
+  nav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;align-items:center;gap:8px;height:54px;overflow-x:auto}
+  nav .brand{font-weight:700;margin-right:auto;white-space:nowrap;font-size:.98rem}
+  nav a{color:var(--muted);font-size:.87rem;padding:6px 9px;border-radius:7px;white-space:nowrap}
+  nav a:hover{color:var(--ink);text-decoration:none;background:var(--card)}
+  nav a.active{color:var(--win);font-weight:600}
+  /* hero */
+  .hero{padding:70px 0 54px;border-top:none}
+  .hero h1{font-size:2.5rem;letter-spacing:-.02em;margin:.1em 0 .3em}
+  .hero .sub{color:var(--muted);font-size:1.18rem;max-width:720px}
+  .hero .byline{color:var(--muted);font-size:.95rem;margin-top:14px}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:34px 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 16px}
+  .stat .n{font-size:2rem;font-weight:800;letter-spacing:-.02em}
+  .stat.win .n{color:var(--win)} .stat.teach .n{color:var(--teach)}
+  .stat .l{color:var(--muted);font-size:.82rem;margin-top:2px}
+  .btns{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:11px 18px;border-radius:10px;
+    font-weight:600;font-size:.95rem;border:1px solid var(--line);color:var(--ink);background:var(--card)}
+  .btn.primary{background:var(--win);color:#fff;border-color:var(--win)}
+  .btn:hover{text-decoration:none;transform:translateY(-1px)}
+  .btn{transition:transform .12s ease}
+  /* tldr */
+  .tldr{background:linear-gradient(180deg,color-mix(in srgb,var(--win) 8%,var(--card)),var(--card));
+    border:1px solid color-mix(in srgb,var(--win) 30%,var(--line));border-left:4px solid var(--win);
+    border-radius:12px;padding:22px 24px;font-size:1.05rem}
+  .tldr b{color:var(--win-d)}
+  @media (prefers-color-scheme: dark){.tldr b{color:var(--win)}}
+  /* figures */
+  figure{margin:24px 0 0}
+  figure img{width:100%;height:auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px}
+  figcaption{color:var(--muted);font-size:.86rem;margin-top:8px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:center}
+  /* interactive toggle chart */
+  .toggle{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px;margin:6px 0 4px}
+  .toggle button{border:0;background:transparent;color:var(--muted);font-weight:600;font-size:.9rem;
+    padding:8px 16px;border-radius:7px;cursor:pointer}
+  .toggle button.on{background:var(--win);color:#fff}
+  #flipchart{width:100%;max-width:720px}
+  .flipnote{color:var(--muted);font-size:.9rem;margin-top:6px}
+  /* gallery */
+  .filters{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 20px}
+  .filters button{border:1px solid var(--line);background:var(--card);color:var(--muted);
+    padding:7px 13px;border-radius:20px;font-size:.85rem;font-weight:600;cursor:pointer}
+  .filters button.on{background:var(--win);color:#fff;border-color:var(--win)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;cursor:pointer;
+    transition:transform .12s ease,box-shadow .12s ease}
+  .card:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.10)}
+  .card img{width:100%;height:130px;object-fit:contain;background:#fff;display:block;padding:6px}
+  .card .meta{padding:9px 11px}
+  .card .meta .t{font-size:.8rem;font-weight:600;line-height:1.3;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card .meta .f{font-size:.72rem;color:var(--muted);margin-top:3px}
+  /* lightbox */
+  .lb{position:fixed;inset:0;background:rgba(10,14,22,.85);display:none;align-items:center;justify-content:center;
+    z-index:100;padding:24px}
+  .lb.open{display:flex}
+  .lb .inner{background:var(--bg);border-radius:14px;max-width:680px;width:100%;max-height:90vh;overflow:auto}
+  .lb img{width:100%;background:#fff;border-radius:14px 14px 0 0;max-height:60vh;object-fit:contain;padding:12px}
+  .lb .cap{padding:16px 20px}
+  .lb .cap .t{font-weight:700;font-size:1.05rem}
+  .lb .cap .m{color:var(--muted);font-size:.9rem;margin-top:4px}
+  .lb .close{position:absolute;top:18px;right:22px;color:#fff;font-size:2rem;cursor:pointer;line-height:1}
+  /* misc */
+  pre{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;overflow:auto;font-size:.85rem}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin-top:8px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600}
+  tr.win td{background:color-mix(in srgb,var(--win) 10%,transparent);font-weight:600}
+  tr.teach td{color:var(--teach)}
+  footer{border-top:1px solid var(--line);padding:40px 0 60px;color:var(--muted);font-size:.9rem}
+  footer .bio{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:20px;color:var(--ink)}
+  .reveal{opacity:0;transform:translateY(14px);transition:opacity .5s ease,transform .5s ease}
+  .reveal.in{opacity:1;transform:none}
+  @media (max-width:720px){
+    .stats{grid-template-columns:repeat(2,1fr)} .two{grid-template-columns:1fr}
+    .hero h1{font-size:1.9rem} h2{font-size:1.4rem}
+  }
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <span class="brand">STEM-Diagrams</span>
+  <a href="#result">Result</a>
+  <a href="#speed">Speed</a>
+  <a href="#data">Data</a>
+  <a href="#gallery">Gallery</a>
+  <a href="#ablation">Ablation</a>
+  <a href="#reproduce">Reproduce</a>
+  <a href="https://github.com/adoistic/stem-diagrams">GitHub ↗</a>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <h1>Distilling an LLM Diagram-Curation Pipeline into Local Classifiers</h1>
+  <p class="sub">A frozen SigLIP2 encoder with a logistic-regression head beats the vision-LLM
+  that generated its training labels &mdash; more accurate, ~200&times; faster, and free, on a laptop.</p>
+  <div class="stats">
+    <div class="stat win"><div class="n" data-count="86.0" data-suffix="%">0</div><div class="l">gold accuracy (winner)</div></div>
+    <div class="stat teach"><div class="n" data-count="75.5" data-suffix="%">0</div><div class="l">LLM teacher accuracy</div></div>
+    <div class="stat win"><div class="n" data-count="51.8" data-suffix=" ms">0</div><div class="l">per crop on a laptop GPU</div></div>
+    <div class="stat"><div class="n" data-count="2000" data-suffix="" data-int="1">0</div><div class="l">labeled diagrams released</div></div>
+  </div>
+  <div class="btns">
+    <a class="btn primary" href="./paper.pdf">Read the paper (PDF)</a>
+    <a class="btn" href="https://github.com/adoistic/stem-diagrams">Code on GitHub</a>
+    <a class="btn" href="https://pub-4b177d3c9b154dfeb08296540e8242ee.r2.dev/stem-diagrams-v1.zip">Download dataset (37&nbsp;MB)</a>
+  </div>
+  <p class="byline">By <b>Adnan Abbasi</b>, founder of Thothica &middot; July 2026</p>
+</div></header>
+
+<section id="tldr" style="border-top:none;padding-top:12px">
+<div class="wrap">
+  <div class="tldr reveal">
+    A frozen <b>SigLIP2 + logistic regression</b> classifies figure crops as diagram/not-diagram at
+    <b>86.0%</b> against hand-verified truth [95% CI 81.5&ndash;90.5], beating the LLM pipeline that
+    <em>generated its training labels</em> by <b>10.5 points</b> (75.5%; McNemar <em>p</em>=0.0005), at
+    <b>~52&nbsp;ms/crop</b> vs ~4&ndash;17&nbsp;s per LLM call &mdash; offline, deterministic, zero cost.
+    Even <b>zero-shot</b> (no training) beats the LLM. The complex options lost: a fine-tune (71.5%)
+    and MLP heads (78%) overfit the teacher's ~25% label noise. The lesson: under LLM distillation,
+    validate on a gold set or you ship the wrong model.
+  </div>
+</div>
+</section>
+
+<section id="result"><div class="wrap">
+  <h2 class="reveal">The result: the student beats its teacher</h2>
+  <p class="lead reveal">Nine approaches on a hand-verified gold set of 200 crops. The simplest learned model wins.</p>
+  <figure class="reveal"><img src="./assets/figures/fig1_gold_leaderboard.svg" alt="Gold accuracy leaderboard">
+    <figcaption>Figure 1. Gold accuracy with 95% confidence intervals. The dashed line is the LLM teacher.</figcaption>
+  </figure>
+
+  <h3 style="margin-top:40px">The trap: silver validation picks the wrong model</h3>
+  <p class="lead reveal">Toggle between what the LLM-generated labels (silver) say and what hand-verified
+  truth (gold) says. Watch the models re-rank &mdash; the MLP looks best on silver, but collapses on gold
+  because it memorized the teacher's noise.</p>
+  <div class="toggle reveal" role="tablist">
+    <button id="btn-silver" class="on" onclick="setFlip('silver')">Silver validation</button>
+    <button id="btn-gold" onclick="setFlip('gold')">Gold truth</button>
+  </div>
+  <svg id="flipchart" viewBox="0 0 720 360" role="img" aria-label="silver vs gold accuracy"></svg>
+  <p class="flipnote reveal" id="flipnote"></p>
+</div></section>
+
+<section id="speed"><div class="wrap">
+  <h2 class="reveal">Speed: ~200&times; faster than the LLM, on a laptop</h2>
+  <p class="lead reveal">Measured single-image latency on an Apple-Silicon MacBook. The winner sits top-left
+  (high accuracy, low latency); the LLM gate is two orders of magnitude slower at lower accuracy.</p>
+  <figure class="reveal"><img src="./assets/figures/fig3_speed_accuracy.svg" alt="Accuracy vs speed">
+    <figcaption>Figure 2. Accuracy vs. latency (log scale). Free local inference, fully offline.</figcaption>
+  </figure>
+</div></section>
+
+<section id="data"><div class="wrap">
+  <h2 class="reveal">How the data was made</h2>
+  <p class="lead reveal">A resumable pipeline turns arXiv PDFs into labeled diagrams for $20.36. Every
+  decision is journaled, so the classifier training set is a byproduct &mdash; and the LLM that made it
+  becomes the &ldquo;teacher&rdquo; we then beat.</p>
+  <figure class="reveal"><img src="./assets/figures/fig4_data_funnel.svg" alt="Data pipeline flow">
+    <figcaption>Figure 3. The extraction pipeline: 1,183 papers &rarr; 12,266 judged pages &rarr; 2,000 accepted diagrams.</figcaption>
+  </figure>
+</div></section>
+
+<section id="gallery"><div class="wrap">
+  <h2 class="reveal">Explore the dataset</h2>
+  <p class="lead reveal">A sample of the 2,000 released diagrams. Filter by field; click any diagram for its
+  type, label, and source paper.</p>
+  <div class="filters reveal" id="filters"></div>
+  <div class="grid" id="grid"></div>
+</div></section>
+
+<section id="ablation"><div class="wrap">
+  <h2 class="reveal">Does removing the label noise help? No.</h2>
+  <p class="lead reveal">Cleaning the estimated noisiest training labels leaves the noise-robust winner
+  flat (it removes data, not the noise it already ignores) and only lets the overfitting model catch up
+  &mdash; never past the simple baseline. To beat 86% you must add signal, not subtract noise.</p>
+  <figure class="reveal"><img src="./assets/figures/fig5_ablation.svg" alt="Label cleaning ablation">
+    <figcaption>Figure 4. Confident-learning label cleaning, evaluated on gold.</figcaption>
+  </figure>
+</div></section>
+
+<section id="reproduce"><div class="wrap">
+  <h2 class="reveal">Reproduce it</h2>
+  <p class="lead reveal">Everything is open source and runs on a laptop &mdash; no GPU cluster, no Colab.</p>
+  <pre class="reveal">git clone https://github.com/adoistic/stem-diagrams
+cd stem-diagrams/arxiv_diagram_pipeline/ml
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r requirements.txt
+
+python assemble_dataset.py        # frozen paper-level splits
+python extract_embeddings.py --backbone siglip2
+python probe_experiments.py       # train the probes (seconds)
+python evaluate.py --gold probe_siglip2_logreg   # headline vs gold</pre>
+  <p class="lead reveal" style="margin-top:18px">The full method &mdash; gold-labeling protocol, the model ladder,
+  and the production decision &mdash; is in the <a href="./paper.pdf">paper</a>.</p>
+</div></section>
+
+<footer><div class="wrap">
+  <div class="bio">
+    <b>Adnan Abbasi</b> is the founder of Thothica.
+  </div>
+  Code released under the MIT License. Dataset labels &amp; metadata under CC BY 4.0; diagram images are
+  figures from arXiv papers and remain under their original licenses (each row records its source
+  <code>arxiv_id</code>). &middot;
+  <a href="https://github.com/adoistic/stem-diagrams">GitHub</a> &middot;
+  <a href="./paper.pdf">Paper</a> &middot;
+  <a href="https://pub-4b177d3c9b154dfeb08296540e8242ee.r2.dev/stem-diagrams-v1.zip">Dataset</a>
+</div></footer>
+
+<div class="lb" id="lb" onclick="closeLb(event)">
+  <span class="close" onclick="closeLb(event,true)">&times;</span>
+  <div class="inner">
+    <img id="lb-img" src="" alt="">
+    <div class="cap"><div class="t" id="lb-t"></div><div class="m" id="lb-m"></div></div>
+  </div>
+</div>
+
+<script>
+// ---- embedded data (no external fetch; CSP-safe) ----
+const SILVER_GOLD = [
+  {model:"SigLIP2+logreg", silver:0.828, gold:0.860, win:true},
+  {model:"SigLIP2+MLP", silver:0.858, gold:0.780},
+  {model:"DINOv3+MLP", silver:0.820, gold:0.735},
+  {model:"MobileCLIP+MLP", silver:0.811, gold:0.750},
+  {model:"DINOv2+MLP", silver:0.794, gold:0.765},
+  {model:"Zero-shot", silver:0.743, gold:0.835},
+  {model:"EfficientNet FT", silver:0.732, gold:0.715},
+  {model:"Heuristics", silver:0.775, gold:0.625}
+];
+const FIELDS = {aerospace_engineering:"Aerospace", manufacturing_engineering:"Manufacturing",
+  robotics_automation:"Robotics", semiconductor_engineering:"Semiconductor",
+  telecommunications:"Telecom", utilities_power_systems:"Power systems"};
+const GALLERY = [{"file": "diagram_000001.jpeg", "field": "semiconductor_engineering", "type": "annotated micrograph / device architecture illustration", "title": "Triple-quantum-dot device architecture and fabrication details", "arxiv_id": "2607.13121v1"}, {"file": "diagram_000002.jpeg", "field": "semiconductor_engineering", "type": "Composite technical figure (schematic cross-section and experimental data plots)", "title": "Figure 3: Single-qubit operation of device A", "arxiv_id": "2607.13121v1"}, {"file": "diagram_000030.jpeg", "field": "semiconductor_engineering", "type": "schematic illustration", "title": "Schematic of Laser-Controlled Tellurium Metasurface Beam Splitter", "arxiv_id": "2607.11265v1"}, {"file": "diagram_000004.jpeg", "field": "aerospace_engineering", "type": "mechanical schematic", "title": "Single Track Vehicle Dynamics Model Schematic", "arxiv_id": "2607.13312v1"}, {"file": "diagram_000006.jpeg", "field": "aerospace_engineering", "type": "signal-flow graph", "title": "Multiple short-horizon propagation of the covariance matrix", "arxiv_id": "2607.13312v1"}, {"file": "diagram_000010.jpeg", "field": "aerospace_engineering", "type": "trajectory schematic", "title": "Schematic of MPC Reference Generation at Sampling Instant k", "arxiv_id": "2607.13312v1"}, {"file": "diagram_000020.jpeg", "field": "utilities_power_systems", "type": "composite system architecture/network topology diagram", "title": "Diagram of long chain and bilateral circle supply structure in Traction Network-Power Grid System (TNPGS)", "arxiv_id": "2607.11060v1"}, {"file": "diagram_000021.jpeg", "field": "utilities_power_systems", "type": "network topology diagram", "title": "Schematic of topological modeling for the ATPGS showing power grid and traction network buses and connections", "arxiv_id": "2607.11060v1"}, {"file": "diagram_000022.jpeg", "field": "utilities_power_systems", "type": "circuit schematic", "title": "Electrical schematic of ATPGS power grid and traction network interface", "arxiv_id": "2607.11060v1"}, {"file": "diagram_000116.jpeg", "field": "manufacturing_engineering", "type": "flowchart", "title": "The flowchart of system informatics for epidemic response and risk management", "arxiv_id": "2607.13914v1"}, {"file": "diagram_000117.jpeg", "field": "manufacturing_engineering", "type": "block diagram", "title": "Data-driven risk scoring systems for categorized sampling and testing", "arxiv_id": "2607.13914v1"}, {"file": "diagram_000122.jpeg", "field": "manufacturing_engineering", "type": "conceptual diagram", "title": "Illustration of space-time dynamics in the evolution of an epidemic", "arxiv_id": "2607.13914v1"}, {"file": "diagram_000123.jpeg", "field": "robotics_automation", "type": "composite system architecture and process flow diagram", "title": "Figure 1: Comparison of Prior Interactive Collection vs. PhysClaw (Autonomous Agent with Memory) and Human Cost Analysis", "arxiv_id": "2607.14047v1"}, {"file": "diagram_004375.jpeg", "field": "robotics_automation", "type": "system architecture diagram", "title": "Overview of the proposed planning framework", "arxiv_id": "2607.10438v1"}, {"file": "diagram_004554.jpeg", "field": "robotics_automation", "type": "block diagram", "title": "Overview of ABot-N1 System Architecture", "arxiv_id": "2607.10383v2"}, {"file": "diagram_002059.jpeg", "field": "telecommunications", "type": "system architecture diagram", "title": "Time-frequency domain channel configuration for the Repeated Contention Scheduling (RCS) algorithm.", "arxiv_id": "2607.06103v1"}, {"file": "diagram_002061.jpeg", "field": "telecommunications", "type": "network topology map", "title": "Antenna placements in Dortmund downtown", "arxiv_id": "2607.06115v1"}, {"file": "diagram_002062.jpeg", "field": "telecommunications", "type": "block diagram", "title": "System model showing the HARQ retransmission process and delay decomposition", "arxiv_id": "2607.06169v1"}];
+
+// ---- animated counters ----
+function animateCounter(el){
+  const target=parseFloat(el.dataset.count), isInt=el.dataset.int==="1", suf=el.dataset.suffix||"";
+  const dur=1100, t0=performance.now();
+  function step(t){
+    const p=Math.min(1,(t-t0)/dur), e=1-Math.pow(1-p,3), v=target*e;
+    el.textContent=(isInt?Math.round(v).toLocaleString():v.toFixed(1))+suf;
+    if(p<1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+// ---- flip chart (silver vs gold) ----
+const TEACH=0.755;
+function drawFlip(mode){
+  const svg=document.getElementById('flipchart');
+  const W=720,H=360,padL=120,padR=60,padT=16,padB=34, n=SILVER_GOLD.length;
+  const y0=0.55, y1=0.92; // accuracy axis range
+  const xFor=a=>padL+(a-y0)/(y1-y0)*(W-padL-padR);
+  const rowH=(H-padT-padB)/n;
+  const data=[...SILVER_GOLD].sort((a,b)=>b[mode]-a[mode]);
+  let s='';
+  // teacher line
+  const tx=xFor(TEACH);
+  s+=`<line x1="${tx}" y1="${padT}" x2="${tx}" y2="${H-padB}" stroke="#e76f51" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+  s+=`<text x="${tx+4}" y="${padT+11}" font-size="11" fill="#e76f51">LLM 0.755</text>`;
+  data.forEach((d,i)=>{
+    const cy=padT+i*rowH+rowH/2, val=d[mode], bx=xFor(val), x0=xFor(y0);
+    const color=d.win?"#2a9d8f":(val>=TEACH?"#6c9":"#9aa4b2");
+    const fill=d.win?"#2a9d8f":(val>=TEACH?"#79b0a6":"#9aa4b2");
+    s+=`<rect x="${x0}" y="${cy-9}" width="${Math.max(0,bx-x0)}" height="18" rx="4" fill="${fill}">
+      <animate attributeName="width" to="${Math.max(0,bx-x0)}" dur="0.5s" fill="freeze"/></rect>`;
+    s+=`<text x="${padL-8}" y="${cy+4}" text-anchor="end" font-size="12" fill="currentColor" ${d.win?'font-weight="700"':''}>${d.model}</text>`;
+    s+=`<text x="${bx+6}" y="${cy+4}" font-size="12" fill="currentColor" ${d.win?'font-weight="700"':''}>${val.toFixed(3)}</text>`;
+  });
+  svg.innerHTML=s;
+}
+let flipMode='silver';
+function setFlip(m){
+  flipMode=m;
+  document.getElementById('btn-silver').classList.toggle('on',m==='silver');
+  document.getElementById('btn-gold').classList.toggle('on',m==='gold');
+  drawFlip(m);
+  document.getElementById('flipnote').textContent = m==='silver'
+    ? "On silver validation, SigLIP2+MLP (0.858) tops the board and the winner sits mid-pack."
+    : "On gold truth, the ranking flips: SigLIP2+logreg (0.860) and zero-shot (0.835) rise; the MLP falls below the LLM.";
+}
+// ---- gallery ----
+function renderGallery(field){
+  const grid=document.getElementById('grid'); grid.innerHTML='';
+  GALLERY.filter(g=>!field||g.field===field).forEach(g=>{
+    const c=document.createElement('div'); c.className='card';
+    c.innerHTML=`<img loading="lazy" src="./assets/samples/${g.file}" alt="${g.type||'diagram'}">
+      <div class="meta"><div class="t">${g.title||g.type||'Diagram'}</div>
+      <div class="f">${FIELDS[g.field]||g.field} &middot; ${g.type||''}</div></div>`;
+    c.onclick=()=>openLb(g);
+    grid.appendChild(c);
+  });
+}
+function openLb(g){
+  document.getElementById('lb-img').src=`./assets/samples/${g.file}`;
+  document.getElementById('lb-t').textContent=g.title||g.type||'Diagram';
+  document.getElementById('lb-m').innerHTML=`${FIELDS[g.field]||g.field} &middot; ${g.type||''} &middot;
+    <a href="https://arxiv.org/abs/${g.arxiv_id}" target="_blank" rel="noopener">arXiv:${g.arxiv_id} ↗</a>`;
+  document.getElementById('lb').classList.add('open');
+}
+function closeLb(e,force){ if(force||e.target.id==='lb') document.getElementById('lb').classList.remove('open'); }
+function buildFilters(){
+  const f=document.getElementById('filters'); const fields=[...new Set(GALLERY.map(g=>g.field))];
+  const mk=(label,val,on)=>{const b=document.createElement('button');b.textContent=label;b.className=on?'on':'';
+    b.onclick=()=>{[...f.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');renderGallery(val)};return b};
+  f.appendChild(mk('All',null,true));
+  fields.forEach(fl=>f.appendChild(mk(FIELDS[fl]||fl,fl,false)));
+}
+// ---- scroll spy + reveal ----
+function initObservers(){
+  const counters=document.querySelectorAll('[data-count]');
+  const co=new IntersectionObserver((es)=>es.forEach(e=>{if(e.isIntersecting){animateCounter(e.target);co.unobserve(e.target)}}),{threshold:.25});
+  counters.forEach(c=>co.observe(c));
+  // safety net: any counter that never animated shows its final value
+  window.addEventListener('load',()=>setTimeout(()=>counters.forEach(e=>{
+    if(e.textContent==='0'){const suf=e.dataset.suffix||'',t=parseFloat(e.dataset.count);
+      e.textContent=(e.dataset.int==='1'?Math.round(t).toLocaleString():t.toFixed(1))+suf;}
+  }),2600));
+  const ro=new IntersectionObserver((es)=>es.forEach(e=>{if(e.isIntersecting)e.target.classList.add('in')}),
+    {threshold:0, rootMargin:"0px 0px -8% 0px"});
+  document.querySelectorAll('.reveal').forEach(r=>ro.observe(r));
+  // safety net: never leave content permanently invisible if the observer misfires
+  setTimeout(()=>document.querySelectorAll('.reveal:not(.in)').forEach(e=>{
+    const r=e.getBoundingClientRect();
+    if(r.top<window.innerHeight&&r.bottom>0) e.classList.add('in');
+  }),400);
+  window.addEventListener('load',()=>setTimeout(()=>
+    document.querySelectorAll('.reveal').forEach(e=>e.classList.add('in')),2500));
+  const secs=[...document.querySelectorAll('section[id]')];
+  const navlinks=[...document.querySelectorAll('nav a[href^="#"]')];
+  const so=new IntersectionObserver((es)=>es.forEach(e=>{
+    if(e.isIntersecting){navlinks.forEach(a=>a.classList.toggle('active',a.getAttribute('href')==='#'+e.target.id))}
+  }),{rootMargin:"-45% 0px -50% 0px"});
+  secs.forEach(s=>so.observe(s));
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  setFlip('silver'); buildFilters(); renderGallery(null); initObservers();
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('lb').classList.remove('open')});
+});
+</script>
+</body>
+</html>

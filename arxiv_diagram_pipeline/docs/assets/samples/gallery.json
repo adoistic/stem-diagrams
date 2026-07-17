@@ -1,0 +1,128 @@
+[
+  {
+    "file": "diagram_000001.jpeg",
+    "field": "semiconductor_engineering",
+    "type": "annotated micrograph / device architecture illustration",
+    "title": "Triple-quantum-dot device architecture and fabrication details",
+    "arxiv_id": "2607.13121v1"
+  },
+  {
+    "file": "diagram_000002.jpeg",
+    "field": "semiconductor_engineering",
+    "type": "Composite technical figure (schematic cross-section and experimental data plots)",
+    "title": "Figure 3: Single-qubit operation of device A",
+    "arxiv_id": "2607.13121v1"
+  },
+  {
+    "file": "diagram_000030.jpeg",
+    "field": "semiconductor_engineering",
+    "type": "schematic illustration",
+    "title": "Schematic of Laser-Controlled Tellurium Metasurface Beam Splitter",
+    "arxiv_id": "2607.11265v1"
+  },
+  {
+    "file": "diagram_000004.jpeg",
+    "field": "aerospace_engineering",
+    "type": "mechanical schematic",
+    "title": "Single Track Vehicle Dynamics Model Schematic",
+    "arxiv_id": "2607.13312v1"
+  },
+  {
+    "file": "diagram_000006.jpeg",
+    "field": "aerospace_engineering",
+    "type": "signal-flow graph",
+    "title": "Multiple short-horizon propagation of the covariance matrix",
+    "arxiv_id": "2607.13312v1"
+  },
+  {
+    "file": "diagram_000010.jpeg",
+    "field": "aerospace_engineering",
+    "type": "trajectory schematic",
+    "title": "Schematic of MPC Reference Generation at Sampling Instant k",
+    "arxiv_id": "2607.13312v1"
+  },
+  {
+    "file": "diagram_000020.jpeg",
+    "field": "utilities_power_systems",
+    "type": "composite system architecture/network topology diagram",
+    "title": "Diagram of long chain and bilateral circle supply structure in Traction Network-Power Grid System (TNPGS)",
+    "arxiv_id": "2607.11060v1"
+  },
+  {
+    "file": "diagram_000021.jpeg",
+    "field": "utilities_power_systems",
+    "type": "network topology diagram",
+    "title": "Schematic of topological modeling for the ATPGS showing power grid and traction network buses and connections",
+    "arxiv_id": "2607.11060v1"
+  },
+  {
+    "file": "diagram_000022.jpeg",
+    "field": "utilities_power_systems",
+    "type": "circuit schematic",
+    "title": "Electrical schematic of ATPGS power grid and traction network interface",
+    "arxiv_id": "2607.11060v1"
+  },
+  {
+    "file": "diagram_000116.jpeg",
+    "field": "manufacturing_engineering",
+    "type": "flowchart",
+    "title": "The flowchart of system informatics for epidemic response and risk management",
+    "arxiv_id": "2607.13914v1"
+  },
+  {
+    "file": "diagram_000117.jpeg",
+    "field": "manufacturing_engineering",
+    "type": "block diagram",
+    "title": "Data-driven risk scoring systems for categorized sampling and testing",
+    "arxiv_id": "2607.13914v1"
+  },
+  {
+    "file": "diagram_000122.jpeg",
+    "field": "manufacturing_engineering",
+    "type": "conceptual diagram",
+    "title": "Illustration of space-time dynamics in the evolution of an epidemic",
+    "arxiv_id": "2607.13914v1"
+  },
+  {
+    "file": "diagram_000123.jpeg",
+    "field": "robotics_automation",
+    "type": "composite system architecture and process flow diagram",
+    "title": "Figure 1: Comparison of Prior Interactive Collection vs. PhysClaw (Autonomous Agent with Memory) and Human Cost Analysis",
+    "arxiv_id": "2607.14047v1"
+  },
+  {
+    "file": "diagram_004375.jpeg",
+    "field": "robotics_automation",
+    "type": "system architecture diagram",
+    "title": "Overview of the proposed planning framework",
+    "arxiv_id": "2607.10438v1"
+  },
+  {
+    "file": "diagram_004554.jpeg",
+    "field": "robotics_automation",
+    "type": "block diagram",
+    "title": "Overview of ABot-N1 System Architecture",
+    "arxiv_id": "2607.10383v2"
+  },
+  {
+    "file": "diagram_002059.jpeg",
+    "field": "telecommunications",
+    "type": "system architecture diagram",
+    "title": "Time-frequency domain channel configuration for the Repeated Contention Scheduling (RCS) algorithm.",
+    "arxiv_id": "2607.06103v1"
+  },
+  {
+    "file": "diagram_002061.jpeg",
+    "field": "telecommunications",
+    "type": "network topology map",
+    "title": "Antenna placements in Dortmund downtown",
+    "arxiv_id": "2607.06115v1"
+  },
+  {
+    "file": "diagram_002062.jpeg",
+    "field": "telecommunications",
+    "type": "block diagram",
+    "title": "System model showing the HARQ retransmission process and delay decomposition",
+    "arxiv_id": "2607.06169v1"
+  }
+]

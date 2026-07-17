@@ -21,3 +21,12 @@ arxiv_diagram_pipeline/ml/preds/
 
 # macOS
 .DS_Store
+
+# ML data release artifacts (regenerable; images live in R2)
+arxiv_diagram_pipeline/data_release/
+arxiv_diagram_pipeline/stem-diagrams-v1.zip
+arxiv_diagram_pipeline/arxiv-submission.tar.gz
+arxiv_diagram_pipeline/ml/.venv/
+arxiv_diagram_pipeline/paper/paper.pdf
+arxiv_diagram_pipeline/.wrangler/
+.wrangler/

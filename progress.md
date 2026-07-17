@@ -34,4 +34,12 @@
 - GOLD SETS DONE. Crops: 200, dual-Sonnet raters κ=0.925 (4cls)/0.940 (binary), 9 disagreements Fable-adjudicated, RUBRIC v1.1 (band-diagram clarification). Pages: 120, κ=0.798, 10 adjudicated. **Gold vs silver: 24.5% binary disagreement (crops), 20% (pages) — the LLM pipeline itself scores ~75-80% vs strict rubric; that's the bar local models must beat on gold.**
 - Ladder so far (VAL, vs silver): A heuristics 77.5% acc/F1 .835 · B zero-shot siglip2 74.3% (negative result — below floor) · C probe siglip2+MLP **85.8% acc / F1 .887** (logreg 82.8%) · D finetune efficientnet_b0 73-78% F1 .778 (NEGATIVE: full fine-tune loses to frozen probes on 2.2k noisy labels, 14 min MPS) · E detector + C-remaining-backbones running.
 - Ops notes: HF stale .lock files after killed process → infinite hang (cleared, HF_HUB_OFFLINE=1); torch-MPS wedges on this extraction workload (518px big batches) though finetune ran fine — descoped extraction+detector to CPU per time-box rule.
+
+## Session 3 COMPLETE — 2026-07-17 (survived 2 laptop shutdowns via on-disk state)
+- GOLD HEADLINE (n=200 crops, hand truth): **SigLIP2+logreg 86.0% [81.5-90.5] > zero-shot SigLIP2 83.5% > ... > LLM teacher 75.5% > MLP heads/finetune/heuristics**. McNemar logreg-vs-teacher p=0.0005 (SIGNIFICANT), logreg-vs-zeroshot p=0.38 (tie). Silver-val leader (MLP 85.8%) DROPPED to 78% on gold = overfit teacher's noise. Core lesson: validate on gold under noisy distillation or ship wrong model.
+- Page gate DocLayout-YOLO: 61.7% gold (prec 0.44), 0.2 pages/s — NEGATIVE, wrong tool. Page gate derived from crop classifier instead.
+- Label-cleaning ablation: does NOT help winner (removes data not signal); rescues overfitters but not past baseline.
+- Speed (measured M-series): SigLIP2+logreg 52ms MPS/125ms CPU, MobileCLIP 20ms — ~100-300x faster than 4-17s LLM.
+- PRODUCTION DECISION: replace BOTH gates with frozen SigLIP2+logreg (or zero-shot for no-data start; MobileCLIP for low-latency). LLM kept only for diagram description. Shadow-mode rollout + 2% audit.
+- All committed+pushed (2f15a3d). PAPER.md complete, 22 result JSONs, RUBRIC v1.1, method doc. Recovery pattern proven: everything-on-disk survived 2 hard shutdowns with zero analytical loss.
 - Next phase researched (no code yet): research/classifier_research.md — distillation plan to replace LLM gates with local models (DocLayout-YOLO for pages/extraction, SigLIP2/DINOv3 embedding probes for crops, cascade+abstention), full eval protocol (paper-level splits, gold set, McNemar, latency benchmarks), laptop-first.
