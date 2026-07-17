@@ -25,20 +25,20 @@ measurements, and a production decision}
 \begin{abstract}
 \noindent
 A frozen SigLIP2 image encoder with a logistic-regression head classifies
-figure crops as diagram / not-diagram at \textbf{86.0\% against hand-verified
-truth} (95\% CI [81.5, 90.5]), beating the vision-LLM pipeline that
+figure crops as diagram or not-diagram at \textbf{86.0\% against hand-verified
+truth} (95\% CI [81.5, 90.5]). That beats the vision-LLM pipeline that
 \emph{generated its training labels} by \textbf{10.5 points} (75.5\%; McNemar
-$p=0.0005$), at \textbf{$\sim$52\,ms/crop on a laptop GPU} versus 4--17\,s per
-LLM call --- offline, deterministic, at zero marginal cost. Zero-shot SigLIP2
-(no training) also beats the LLM (83.5\%, statistically tied with the trained
-probe). The complex options lost: an end-to-end fine-tune (71.5\%) and MLP
-heads (78.0\%) overfit the teacher's $\sim$25\% label noise, and an
-off-the-shelf document layout detector for the page gate scored 61.7\% while
-running 100$\times$ slower. We release the pipeline, the 2{,}000-diagram
-dataset, and all code. The central methodological lesson: under LLM
-distillation with noisy labels, validate against a hand-verified gold set or
-you will ship the wrong model --- silver validation ranked the worst-generalizing
-model first.
+$p=0.0005$), at \textbf{$\sim$52\,ms per crop on a laptop GPU} versus 4--17\,s
+per LLM call, offline and at zero marginal cost. Zero-shot SigLIP2, with no
+training at all, also beats the LLM (83.5\%, statistically tied with the
+trained probe). The more complex options did worse: an end-to-end fine-tune
+(71.5\%) and MLP heads (78.0\%) overfit the teacher's $\sim$25\% label noise,
+and an off-the-shelf document layout detector for the page gate scored 61.7\%
+while running 100$\times$ slower. We release the pipeline, the dataset of
+2{,}000 diagrams, and the code. One methodological point stands out: when you
+distill a noisy LLM labeler, checking the student against that same labeler
+selects the wrong model. Silver validation here ranked the worst-generalizing
+model first, and only a hand-verified gold set caught it.
 \end{abstract}
 
 \section{Problem and contribution}

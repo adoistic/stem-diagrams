@@ -124,8 +124,9 @@
 
 <header class="hero"><div class="wrap">
   <h1>Distilling an LLM Diagram-Curation Pipeline into Local Classifiers</h1>
-  <p class="sub">A frozen SigLIP2 encoder with a logistic-regression head beats the vision-LLM
-  that generated its training labels &mdash; more accurate, ~200&times; faster, and free, on a laptop.</p>
+  <p class="sub">A frozen SigLIP2 encoder with a small logistic-regression head beats the
+  vision-LLM that labeled its own training data. It's more accurate, runs about 200&times; faster,
+  and costs nothing on a laptop.</p>
   <div class="stats">
     <div class="stat win"><div class="n" data-count="86.0" data-suffix="%">0</div><div class="l">gold accuracy (winner)</div></div>
     <div class="stat teach"><div class="n" data-count="75.5" data-suffix="%">0</div><div class="l">LLM teacher accuracy</div></div>
@@ -143,28 +144,28 @@
 <section id="tldr" style="border-top:none;padding-top:12px">
 <div class="wrap">
   <div class="tldr reveal">
-    A frozen <b>SigLIP2 + logistic regression</b> classifies figure crops as diagram/not-diagram at
-    <b>86.0%</b> against hand-verified truth [95% CI 81.5&ndash;90.5], beating the LLM pipeline that
-    <em>generated its training labels</em> by <b>10.5 points</b> (75.5%; McNemar <em>p</em>=0.0005), at
-    <b>~52&nbsp;ms/crop</b> vs ~4&ndash;17&nbsp;s per LLM call &mdash; offline, deterministic, zero cost.
-    Even <b>zero-shot</b> (no training) beats the LLM. The complex options lost: a fine-tune (71.5%)
-    and MLP heads (78%) overfit the teacher's ~25% label noise. The lesson: under LLM distillation,
-    validate on a gold set or you ship the wrong model.
+    We used a vision-LLM to label 2,000 diagrams, then asked whether a local model could take over
+    the classification. It can, and it beats its teacher. A frozen <b>SigLIP2 + logistic regression</b>
+    hits <b>86.0%</b> against hand-checked truth [CI 81.5&ndash;90.5], against the LLM's 75.5%
+    (McNemar <em>p</em>=0.0005), at about <b>52&nbsp;ms per crop</b> instead of 4 to 17 seconds.
+    Zero-shot beats the LLM too. The surprise: the fancier models lost. A fine-tune (71.5%) and MLP
+    heads (78%) memorized the teacher's 25% label noise; the simplest model couldn't. Check a distilled
+    model against the LLM's own labels and you'll pick the wrong one.
   </div>
 </div>
 </section>
 
 <section id="result"><div class="wrap">
   <h2 class="reveal">The result: the student beats its teacher</h2>
-  <p class="lead reveal">Nine approaches on a hand-verified gold set of 200 crops. The simplest learned model wins.</p>
+  <p class="lead reveal">Nine approaches, scored on 200 hand-checked crops. The simplest learned model wins.</p>
   <figure class="reveal"><img src="./assets/figures/fig1_gold_leaderboard.svg" alt="Gold accuracy leaderboard">
     <figcaption>Figure 1. Gold accuracy with 95% confidence intervals. The dashed line is the LLM teacher.</figcaption>
   </figure>
 
   <h3 style="margin-top:40px">The trap: silver validation picks the wrong model</h3>
-  <p class="lead reveal">Toggle between what the LLM-generated labels (silver) say and what hand-verified
-  truth (gold) says. Watch the models re-rank &mdash; the MLP looks best on silver, but collapses on gold
-  because it memorized the teacher's noise.</p>
+  <p class="lead reveal">Flip between what the LLM's labels say (silver) and what hand-checking says (gold).
+  The order changes. The MLP looks best on silver, then falls apart on gold because it learned the
+  teacher's mistakes.</p>
   <div class="toggle reveal" role="tablist">
     <button id="btn-silver" class="on" onclick="setFlip('silver')">Silver validation</button>
     <button id="btn-gold" onclick="setFlip('gold')">Gold truth</button>
@@ -175,8 +176,8 @@
 
 <section id="speed"><div class="wrap">
   <h2 class="reveal">Speed: ~200&times; faster than the LLM, on a laptop</h2>
-  <p class="lead reveal">Measured single-image latency on an Apple-Silicon MacBook. The winner sits top-left
-  (high accuracy, low latency); the LLM gate is two orders of magnitude slower at lower accuracy.</p>
+  <p class="lead reveal">Single-image latency, measured on an Apple-Silicon MacBook. The winner sits in the
+  top-left corner: accurate and fast. The LLM gate is two orders of magnitude slower, and less accurate.</p>
   <figure class="reveal"><img src="./assets/figures/fig3_speed_accuracy.svg" alt="Accuracy vs speed">
     <figcaption>Figure 2. Accuracy vs. latency (log scale). Free local inference, fully offline.</figcaption>
   </figure>
@@ -184,9 +185,9 @@
 
 <section id="data"><div class="wrap">
   <h2 class="reveal">How the data was made</h2>
-  <p class="lead reveal">A resumable pipeline turns arXiv PDFs into labeled diagrams for $20.36. Every
-  decision is journaled, so the classifier training set is a byproduct &mdash; and the LLM that made it
-  becomes the &ldquo;teacher&rdquo; we then beat.</p>
+  <p class="lead reveal">A resumable pipeline turns arXiv PDFs into labeled diagrams for $20.36. It journals
+  every decision, so the training set for the classifier falls out as a byproduct. The LLM that built it
+  becomes the teacher we later beat.</p>
   <figure class="reveal"><img src="./assets/figures/fig4_data_funnel.svg" alt="Data pipeline flow">
     <figcaption>Figure 3. The extraction pipeline: 1,183 papers &rarr; 12,266 judged pages &rarr; 2,000 accepted diagrams.</figcaption>
   </figure>
@@ -202,9 +203,9 @@
 
 <section id="ablation"><div class="wrap">
   <h2 class="reveal">Does removing the label noise help? No.</h2>
-  <p class="lead reveal">Cleaning the estimated noisiest training labels leaves the noise-robust winner
-  flat (it removes data, not the noise it already ignores) and only lets the overfitting model catch up
-  &mdash; never past the simple baseline. To beat 86% you must add signal, not subtract noise.</p>
+  <p class="lead reveal">Cleaning out the noisiest training labels doesn't move the winner. It just removes
+  data the model was already ignoring. It does rescue the model that overfit, but not past the simple
+  baseline. To get past 86% you'd need more signal, not less noise.</p>
   <figure class="reveal"><img src="./assets/figures/fig5_ablation.svg" alt="Label cleaning ablation">
     <figcaption>Figure 4. Confident-learning label cleaning, evaluated on gold.</figcaption>
   </figure>
@@ -212,7 +213,7 @@
 
 <section id="reproduce"><div class="wrap">
   <h2 class="reveal">Reproduce it</h2>
-  <p class="lead reveal">Everything is open source and runs on a laptop &mdash; no GPU cluster, no Colab.</p>
+  <p class="lead reveal">It's all open source, and it runs on a laptop. No GPU cluster, no Colab.</p>
   <pre class="reveal">git clone https://github.com/adoistic/stem-diagrams
 cd stem-diagrams/arxiv_diagram_pipeline/ml
 python3 -m venv .venv &amp;&amp; source .venv/bin/activate
@@ -222,8 +223,8 @@ python assemble_dataset.py        # frozen paper-level splits
 python extract_embeddings.py --backbone siglip2
 python probe_experiments.py       # train the probes (seconds)
 python evaluate.py --gold probe_siglip2_logreg   # headline vs gold</pre>
-  <p class="lead reveal" style="margin-top:18px">The full method &mdash; gold-labeling protocol, the model ladder,
-  and the production decision &mdash; is in the <a href="./paper.pdf">paper</a>.</p>
+  <p class="lead reveal" style="margin-top:18px">The <a href="./paper.pdf">paper</a> has the full method:
+  how the gold set was labeled, every model on the ladder, and the call on what to put in production.</p>
 </div></section>
 
 <footer><div class="wrap">

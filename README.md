@@ -1,9 +1,9 @@
 # STEM Diagrams: an LLM diagram-curation pipeline, distilled into local classifiers
 
-**A frozen SigLIP2 encoder + a logistic-regression head classifies figure crops
-as diagram / not-diagram at 86.0% against hand-verified truth — beating the
-vision-LLM that generated its training labels by 10.5 points (McNemar
-p = 0.0005), at ~52 ms/crop on a laptop, offline and free.**
+**A frozen SigLIP2 encoder with a small logistic-regression head tells diagrams
+from not-diagrams at 86.0% against hand-checked truth. That beats the vision-LLM
+that labeled its own training data by 10.5 points (McNemar p = 0.0005), at
+about 52 ms per crop on a laptop, offline and free.**
 
 📄 **[Read the paper (PDF)](arxiv_diagram_pipeline/paper/paper.pdf)** ·
 🌐 **[Project site](https://adoistic.github.io/stem-diagrams/)** ·

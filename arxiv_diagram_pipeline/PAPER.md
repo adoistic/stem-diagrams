@@ -12,18 +12,18 @@ in the STEM-diagrams dataset pipeline.*
 
 ## 0. TL;DR
 
-A **frozen SigLIP2 encoder + a logistic-regression head** classifies figure
-crops as diagram/not-diagram at **86.0% against hand-verified truth
-[95% CI 81.5–90.5]**, beating the LLM pipeline that generated the training
-labels by **10.5 points (75.5%), McNemar p = 0.0005**, at **~52 ms/crop on a
-MacBook GPU (~125 ms CPU) vs ~4–17 s per LLM call** — offline, deterministic,
-zero marginal cost. **Zero-shot SigLIP2 (no training) also beats the LLM
-(83.5%, statistically tied with the trained probe).** The complex options lost:
-an end-to-end fine-tune (71.5%) and MLP heads (78%) overfit the teacher's ~25%
-label noise; a document layout detector for the page gate scored 61.7% and was
-100× slower. **Decision: replace both LLM gates with the frozen-probe
-classifier; keep the LLM only for writing diagram descriptions.** Full method,
-gold protocol, and per-model numbers below.
+A frozen SigLIP2 encoder with a logistic-regression head classifies figure
+crops as diagram or not-diagram at **86.0% against hand-checked truth
+[95% CI 81.5–90.5]**. That beats the LLM pipeline that generated the training
+labels by **10.5 points (75.5%), McNemar p = 0.0005**, at about **52 ms per crop
+on a MacBook GPU** (125 ms on CPU) against 4 to 17 seconds per LLM call, offline
+and at zero marginal cost. Zero-shot SigLIP2, with no training at all, also
+beats the LLM (83.5%, statistically tied with the trained probe). The more
+complex options did worse: an end-to-end fine-tune (71.5%) and MLP heads (78%)
+overfit the teacher's ~25% label noise, and a document layout detector for the
+page gate scored 61.7% and ran 100× slower. The call: replace both LLM gates
+with the frozen probe and keep the LLM only for writing the descriptions. Full
+method, gold protocol, and per-model numbers below.
 
 ---
 
