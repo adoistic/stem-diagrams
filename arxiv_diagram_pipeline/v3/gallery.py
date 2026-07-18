@@ -43,6 +43,8 @@ grid-template-columns:repeat(4,1fr);gap:12px}
 .pbar .fill{height:100%;background:var(--acc);width:0;transition:width .5s}
 .tzrow{max-width:1200px;margin:10px auto 0;padding:0 20px;color:var(--muted);font-size:.82rem;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 select{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:.82rem}
+a.exp{margin-left:auto;background:var(--acc);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-weight:700;font-size:.82rem;text-decoration:none;cursor:pointer}
+a.exp:hover{opacity:.9}
 .bar{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);z-index:5;padding:12px 20px;margin-top:12px}
 .bar .wrap{max-width:1200px;margin:0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 button.cat{border:1px solid var(--line);background:var(--card);color:var(--muted);padding:7px 14px;border-radius:20px;font-weight:600;font-size:.85rem;cursor:pointer}
@@ -69,7 +71,8 @@ main{max-width:1200px;margin:0 auto;padding:16px 20px 60px}
 </div>
 <div class=pbar><div class=track><div class=fill id=s-fill></div></div></div>
 <div class=tzrow><span>Times shown in</span>
- <select id=tz></select><span id=s-sub></span></div>
+ <select id=tz></select><span id=s-sub></span>
+ <a class=exp id=exp href="../export/stem_diagrams.xlsx" download>⤓ Export (Excel)</a></div>
 <div class=bar><div class=wrap id=cats></div></div>
 <main><div class=grid id=grid></div><button class=more id=more style=display:none>Show more</button></main>
 <div class=lb id=lb><span class=x onclick="lb.classList.remove('on')">&times;</span>
@@ -86,15 +89,21 @@ function tick(){ if(!DATA)return;
 }
 function renderStats(){ if(!DATA)return;
  $('s-start').textContent=fmtTime(DATA.start);
- $('s-count').textContent=`${DATA.count.toLocaleString()} / ${DATA.target.toLocaleString()}`;
- const pct=Math.min(100,DATA.count/DATA.target*100);
- $('s-fill').style.width=pct+'%';
  const el=DATA.updated_epoch-DATA.start, rate=el>0?DATA.count/el:0;
- if(DATA.count>=DATA.target){$('s-eta').textContent='Complete';}
- else if(rate>0){const rem=(DATA.target-DATA.count)/rate; const eta=DATA.updated_epoch+rem;
-  $('s-eta').innerHTML=`${fmtTime(eta)}<br><span style="font-size:.72rem;color:var(--muted);font-weight:400">~${durShort(rem)} left · ${(rate*3600).toFixed(0)}/hr</span>`;}
- else {$('s-eta').textContent='estimating...';}
- $('s-sub').textContent=`· ${DATA.count.toLocaleString()} diagrams across ${Object.keys(DATA.display).length} fields · data updated ${fmtTime(DATA.updated_epoch)}`;
+ const unlimited=!DATA.target||DATA.target<=0;
+ if(unlimited){
+  $('s-count').textContent=DATA.count.toLocaleString();
+  $('s-fill').style.width='100%';document.getElementById('s-fill').style.opacity='.35';
+  $('s-eta').innerHTML=`running<br><span style="font-size:.72rem;color:var(--muted);font-weight:400">${(rate*3600).toFixed(0)}/hr · no fixed target</span>`;
+ }else{
+  $('s-count').textContent=`${DATA.count.toLocaleString()} / ${DATA.target.toLocaleString()}`;
+  $('s-fill').style.width=Math.min(100,DATA.count/DATA.target*100)+'%';
+  if(DATA.count>=DATA.target){$('s-eta').textContent='Complete';}
+  else if(rate>0){const rem=(DATA.target-DATA.count)/rate;
+   $('s-eta').innerHTML=`${fmtTime(DATA.updated_epoch+rem)}<br><span style="font-size:.72rem;color:var(--muted);font-weight:400">~${durShort(rem)} left · ${(rate*3600).toFixed(0)}/hr</span>`;}
+  else {$('s-eta').textContent='estimating...';}
+ }
+ $('s-sub').textContent=`· ${DATA.count.toLocaleString()} diagrams across ${Object.keys(DATA.display).length} fields · updated ${fmtTime(DATA.updated_epoch)}`;
 }
 function render(reset){ if(reset){grid.innerHTML='';shown=0}
  const items=DATA.images.filter(x=>!cat||x.category===cat);
@@ -102,7 +111,8 @@ function render(reset){ if(reset){grid.innerHTML='';shown=0}
   const d=document.createElement('div');d.className='card';
   d.innerHTML=`<img loading=lazy src="${DATA.base}/${it.url}"><div class=m>${DATA.display[it.category]} · p${it.page}</div>`;
   d.onclick=()=>{$('lbimg').src=`${DATA.base}/${it.url}`;
-   $('lbc').innerHTML=`${DATA.display[it.category]} · page ${it.page} · <a href="https://arxiv.org/abs/${it.arxiv_id}" target=_blank>arXiv:${it.arxiv_id}</a> · <a href="${DATA.base}/${it.url}" download>download</a>`;lb.classList.add('on')};
+   const cap=it.caption?`<div style="margin-bottom:8px;line-height:1.5">${it.caption}</div>`:'';
+   $('lbc').innerHTML=`${cap}<div style="color:var(--muted);font-size:.85rem">${DATA.display[it.category]} · page ${it.page} · <a href="https://arxiv.org/abs/${it.arxiv_id}" target=_blank>arXiv:${it.arxiv_id}</a> · <a href="${DATA.base}/${it.url}" download>download image</a></div>`;lb.classList.add('on')};
   grid.appendChild(d);}
  shown+=Math.min(PAGE,Math.max(0,items.length-shown));
  more.style.display=shown<items.length?'block':'none';
@@ -132,21 +142,44 @@ initTZ();refresh(true);setInterval(tick,1000);setInterval(()=>refresh(false),600
 </script></body></html>"""
 
 
+def _build_xlsx(rows, path):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Diagrams"
+    cols = [("Field", 26), ("Caption", 90), ("Page", 6), ("arXiv ID", 15),
+            ("arXiv URL", 30), ("Image URL", 60), ("Method", 8), ("P(diagram)", 10)]
+    for ci, (h, w) in enumerate(cols, 1):
+        cell = ws.cell(1, ci, h)
+        cell.font = Font(bold=True)
+        ws.column_dimensions[chr(64 + ci)].width = w
+    wrap = Alignment(wrap_text=True, vertical="top")
+    for ri, (name, f, a, p, cap, meth, pd) in enumerate(rows, 2):
+        vals = [DISPLAY.get(f, f), cap or "", p, a, f"https://arxiv.org/abs/{a}",
+                f"{R2_PUBLIC}/v3/img/{f}/{name}", meth, round(pd or 0, 3)]
+        for ci, v in enumerate(vals, 1):
+            ws.cell(ri, ci, v).alignment = wrap
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:H{len(rows) + 1}"
+    wb.save(path)
+
+
 def build_and_upload(conn):
     def mget(k, d="0"):
         r = conn.execute("SELECT v FROM meta WHERE k=?", (k,)).fetchone()
         return r[0] if r else d
     rows = conn.execute(
-        "SELECT name, field, arxiv_id, page FROM images WHERE status='uploaded' "
-        "ORDER BY field, name").fetchall()
+        "SELECT name, field, arxiv_id, page, caption, method, p_diagram FROM images "
+        "WHERE status='uploaded' ORDER BY field, name").fetchall()
     count = conn.execute(
         "SELECT COUNT(*) FROM images WHERE status IN ('local','uploaded')").fetchone()[0]
-    images = [{"url": f"v3/img/{f}/{n}", "category": f, "arxiv_id": a, "page": p}
-              for (n, f, a, p) in rows]
+    images = [{"url": f"v3/img/{f}/{n}", "category": f, "arxiv_id": a, "page": p,
+               "caption": cap or ""} for (n, f, a, p, cap, _m, _pd) in rows]
     now = time.time()
     data = {"base": R2_PUBLIC, "display": DISPLAY,
             "start": float(mget("pipeline_start", str(now))),
-            "target": int(mget("target", "10000")),
+            "target": int(mget("target", "0")),
             "count": count, "updated_epoch": now,
             "images": images}
     gdir = WORK / "gallery"
@@ -155,4 +188,13 @@ def build_and_upload(conn):
     (gdir / "index.html").write_text(INDEX_HTML)
     ok1, _ = r2.put(gdir / "data.json", "v3/gallery/data.json", "application/json")
     ok2, _ = r2.put(gdir / "index.html", "v3/gallery/index.html", "text/html")
+    # regenerate the export spreadsheet
+    try:
+        xp = gdir / "stem_diagrams.xlsx"
+        _build_xlsx(rows, xp)
+        r2.put(xp, "v3/export/stem_diagrams.xlsx",
+               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except Exception as exc:
+        import logging
+        logging.getLogger("v3").warning("[export] xlsx failed: %s", exc)
     return ok1 and ok2, len(images)

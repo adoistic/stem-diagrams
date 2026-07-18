@@ -56,6 +56,30 @@ def _clip_to_pil(page, rect, dpi):
     return Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
 
 
+def _caption_below(blocks, rect):
+    """The figure caption is the text just under the figure. Take the nearest
+    text block below the figure that horizontally overlaps it; if it reads like
+    a caption ("Figure 3 ..."), append the following paragraph too. Purely
+    positional — no model, no summarization."""
+    below = []
+    for b in blocks:
+        bx0, by0, bx1, by1, txt = b[0], b[1], b[2], b[3], b[4].strip()
+        if not txt:
+            continue
+        if rect.y1 - 3 <= by0 <= rect.y1 + 260 and not (bx1 < rect.x0 or bx0 > rect.x1):
+            below.append((by0, txt))
+    below.sort()
+    if not below:
+        return ""
+    # prefer an explicit caption ("Figure 3 ...") within the search band; take it
+    # plus the following paragraph. Otherwise fall back to the nearest block.
+    for i, (_y, t) in enumerate(below):
+        if re.match(r"(?i)(fig(ure)?|table|scheme)\b", t):
+            cap = t + (" " + below[i + 1][1] if i + 1 < len(below) else "")
+            return re.sub(r"\s+", " ", cap).strip()[:800]
+    return re.sub(r"\s+", " ", below[0][1]).strip()[:800]
+
+
 def extract_page(page, min_area_frac=0.03, max_area_frac=0.92, dpi=150,
                  min_pt=55, max_aspect=6.0):
     """Return candidate figure dicts for one page:
@@ -104,12 +128,14 @@ def extract_page(page, min_area_frac=0.03, max_area_frac=0.92, dpi=150,
         if all(_overlap_frac(c["bbox"], k["bbox"]) < 0.6 for k in kept):
             kept.append(c)
 
-    # render crops
+    # render crops + grab the caption below each figure (deterministic)
+    blocks = page.get_text("blocks")
     for c in kept:
         b = c["bbox"]
         pad = fitz.Rect(max(0, b.x0 - 4), max(0, b.y0 - 4),
                         min(W, b.x1 + 4), min(H, b.y1 + 4))
         c["image"] = _clip_to_pil(page, pad, dpi)
+        c["caption"] = _caption_below(blocks, b)
         c["bbox"] = [round(b.x0), round(b.y0), round(b.x1), round(b.y1)]
     return kept
 

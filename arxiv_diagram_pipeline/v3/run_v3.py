@@ -75,10 +75,14 @@ def db_conn():
     CREATE INDEX IF NOT EXISTS ix_status ON papers(status);
     CREATE TABLE IF NOT EXISTS images(
       name TEXT PRIMARY KEY, arxiv_id TEXT, field TEXT, page INTEGER, method TEXT,
-      bbox TEXT, p_diagram REAL, status TEXT DEFAULT 'local');
+      bbox TEXT, p_diagram REAL, status TEXT DEFAULT 'local', caption TEXT DEFAULT '');
     CREATE INDEX IF NOT EXISTS ix_img_status ON images(status);
     CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
     """)
+    try:
+        c.execute("ALTER TABLE images ADD COLUMN caption TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     return c
 
 
@@ -140,7 +144,7 @@ def harvest_loop(c, lock, stop, target):
         with lock:
             pend = c.execute("SELECT COUNT(*) FROM papers WHERE status='pending'").fetchone()[0]
             done = accepted(c)
-        if done >= target:
+        if target and done >= target:
             return
         if pend >= HARVEST_BUFFER:
             stop.wait(30)
@@ -250,9 +254,10 @@ def process_paper(c, lock, paper, threshold):
                 fp = stage / name
                 cd["image"].save(fp)
                 with lock:
-                    c.execute("INSERT OR IGNORE INTO images(name,arxiv_id,field,page,method,bbox,p_diagram) "
-                              "VALUES(?,?,?,?,?,?,?)",
-                              (name, aid, field, pno, cd["method"], json.dumps(cd["bbox"]), p))
+                    c.execute("INSERT OR IGNORE INTO images(name,arxiv_id,field,page,method,bbox,p_diagram,caption) "
+                              "VALUES(?,?,?,?,?,?,?,?)",
+                              (name, aid, field, pno, cd["method"], json.dumps(cd["bbox"]), p,
+                               cd.get("caption", "")))
                 _upload_q.put((name, field, str(fp)))
     # archive the pdf per category
     pstage = WORK / "pdf_stage" / field
@@ -293,7 +298,7 @@ def run(args):
         while True:
             with lock:
                 done = accepted(c)
-            if done >= args.target:
+            if args.target and done >= args.target:
                 log.info("TARGET REACHED: %d accepted diagrams", done)
                 break
             with lock:
