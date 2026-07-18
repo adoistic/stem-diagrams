@@ -12,6 +12,10 @@ a{color:var(--acc)}
 .field{margin-bottom:12px}.field input{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:1rem}
 .btn{width:100%;padding:12px;border:none;border-radius:10px;background:var(--acc);color:#fff;font-weight:700;font-size:1rem;cursor:pointer}
 .btn:disabled{opacity:.6}
+.gbtn{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:#fff;color:#3c4043;font-weight:600;font-size:.95rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:14px}
+.gbtn img{width:18px;height:18px}
+.divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.8rem;margin-bottom:14px}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--line)}
 .toggle{margin-top:16px;color:var(--muted);font-size:.9rem;text-align:center}.toggle a{cursor:pointer;font-weight:600}
 .msg{margin:10px 0;font-size:.9rem;min-height:1.2em}.msg.err{color:var(--err)}
 /* app */
@@ -44,6 +48,8 @@ a{color:var(--acc)}
 <div id=auth>
   <h1>STEM Diagrams</h1>
   <p class=sub>Sign in to browse and download the diagram library.</p>
+  <button class=gbtn id=gbtn style=display:none><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PHBhdGggZmlsbD0iI0VBNDMzNSIgZD0iTTI0IDkuNWMzLjU0IDAgNi43MSAxLjIyIDkuMjEgMy42bDYuODUtNi44NUMzNS45IDIuMzggMzAuNDcgMCAyNCAwIDE0LjYyIDAgNi41MSA1LjM4IDIuNTYgMTMuMjJsNy45OCA2LjE5QzEyLjQzIDEzLjcyIDE3Ljc0IDkuNSAyNCA5LjV6Ii8+PHBhdGggZmlsbD0iIzQyODVGNCIgZD0iTTQ2Ljk4IDI0LjU1YzAtMS41Ny0uMTUtMy4wOS0uMzgtNC41NUgyNHY5LjAyaDEyLjk0Yy0uNTggMy0yLjI2IDUuNTMtNC43OCA3LjE4bDcuNzMgNmM0LjUxLTQuMTggNy4wOS0xMC4zNiA3LjA5LTE3LjY1eiIvPjxwYXRoIGZpbGw9IiNGQkJDMDUiIGQ9Ik0xMC41MyAyOC41OWMtLjQ4LTEuNDUtLjc2LTIuOTktLjc2LTQuNTlzLjI3LTMuMTQuNzYtNC41OWwtNy45OC02LjE5QzAuOTIgMTYuNDYgMCAyMC4xMiAwIDI0YzAgMy44OC45MiA3LjU0IDIuNTYgMTAuNzhsNy45Ny02LjE5eiIvPjxwYXRoIGZpbGw9IiMzNEE4NTMiIGQ9Ik0yNCA0OGM2LjQ4IDAgMTEuOTMtMi4xMyAxNS44OS01LjgxbC03LjczLTZjLTIuMTUgMS40NS00LjkyIDIuMy04LjE2IDIuMy02LjI2IDAtMTEuNTctNC4yMi0xMy40Ny05LjkxbC03Ljk4IDYuMTlDNi41MSA0Mi42MiAxNC42MiA0OCAyNCA0OHoiLz48L3N2Zz4="> Continue with Google</button>
+  <div class=divider id=gdiv style=display:none>or continue with email</div>
   <div class=field><input id=email type=email placeholder="Email" autocomplete=username></div>
   <div class=field><input id=password type=password placeholder="Password (min 6 chars)" autocomplete=current-password></div>
   <div class="msg" id=msg></div>
@@ -68,6 +74,8 @@ a{color:var(--acc)}
 
 <div class=lb id=lb><span class=x id=lbx>&times;</span><div class=inner><img id=lbimg><div class=c id=lbc></div></div></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const DISPLAY={semiconductor_engineering:"Semiconductor Engineering",manufacturing_engineering:"Manufacturing Engineering",robotics_automation:"Robotics & Automation",utilities_power_systems:"Utilities & Power Systems",telecommunications:"Telecommunications"};
@@ -130,11 +138,28 @@ $('dlbtn').onclick=async()=>{
  setTimeout(()=>{$('bar').style.display='none'},1500);await load();
 };
 
+async function initGoogle(){
+ try{
+  const cfg=await (await fetch('/api/firebase-config')).json();
+  if(!cfg.enabled||!window.firebase)return;
+  firebase.initializeApp({apiKey:cfg.apiKey,authDomain:cfg.authDomain,projectId:cfg.projectId});
+  $('gbtn').style.display='flex';$('gdiv').style.display='flex';
+  $('gbtn').onclick=async()=>{
+   $('msg').className='msg';$('msg').textContent='';
+   try{
+    const res=await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    const idToken=await res.user.getIdToken();
+    const r=await fetch('/api/google-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({idToken})});
+    if(r.ok)location.reload();else{const j=await r.json();$('msg').className='msg err';$('msg').textContent=j.error||'Google sign-in failed';}
+   }catch(e){$('msg').className='msg err';$('msg').textContent=e.message||'Google sign-in cancelled';}
+  };
+ }catch(e){}
+}
 async function load(){const r=await fetch('/api/manifest');if(!r.ok)return;DATA=await r.json();renderCounts();buildFilters();render(true);}
 async function boot(){
  const me=await fetch('/api/me');
  if(me.ok){const j=await me.json();$('auth').style.display='none';$('app').style.display='block';$('who').textContent=j.email;await load();}
- else{$('auth').style.display='block';setMode('login');}
+ else{$('auth').style.display='block';setMode('login');initGoogle();}
 }
 boot();
 </script></body></html>`;

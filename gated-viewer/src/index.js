@@ -70,6 +70,33 @@ async function pbkdf2(password, saltBytes) {
   return b64u.enc(bits);
 }
 
+// Verify a Firebase Google ID token (RS256, Google's public JWKS). Returns
+// {uid,email} or null. This is how "sign in with any Gmail" is validated.
+async function verifyFirebaseIdToken(idToken, projectId) {
+  if (!idToken || idToken.split(".").length !== 3) return null;
+  const [h, p, s] = idToken.split(".");
+  let header, payload;
+  try {
+    header = JSON.parse(new TextDecoder().decode(b64u.dec(h)));
+    payload = JSON.parse(new TextDecoder().decode(b64u.dec(p)));
+  } catch { return null; }
+  const now = Date.now() / 1000;
+  if (payload.aud !== projectId) return null;
+  if (payload.iss !== `https://securetoken.google.com/${projectId}`) return null;
+  if (!payload.sub || payload.exp < now) return null;
+  const res = await fetch(
+    "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com");
+  const jwks = await res.json();
+  const jwk = (jwks.keys || []).find((k) => k.kid === header.kid);
+  if (!jwk) return null;
+  const key = await crypto.subtle.importKey("jwk",
+    { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RS256", ext: true },
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+  const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64u.dec(s), enc.encode(`${h}.${p}`));
+  if (!ok) return null;
+  return { uid: "google:" + payload.sub, email: (payload.email || "").toLowerCase() };
+}
+
 function cookie(name, req) {
   const m = (req.headers.get("cookie") || "").match(new RegExp("(?:^|; )" + name + "=([^;]+)"));
   return m ? m[1] : null;
@@ -141,13 +168,40 @@ export default {
         return user ? json({ email: user.email }) : json({ error: "not logged in" }, 401);
       }
 
+      // Firebase web config for the frontend (public values)
+      if (path === "/api/firebase-config") {
+        const pid = env.FIREBASE_PROJECT_ID || "";
+        return json({
+          apiKey: env.FIREBASE_API_KEY || "", authDomain: env.FIREBASE_AUTH_DOMAIN || "",
+          projectId: pid,
+          enabled: !!(pid && pid !== "REPLACE_WITH_PROJECT_ID"),
+        });
+      }
+
+      // Sign in with Google (Gmail): frontend gets a Firebase ID token, we
+      // verify it and mint our own session cookie (same as email/password).
+      if (path === "/api/google-login" && req.method === "POST") {
+        const pid = env.FIREBASE_PROJECT_ID;
+        if (!pid || pid === "REPLACE_WITH_PROJECT_ID")
+          return json({ error: "Google sign-in isn't configured yet." }, 503);
+        const { idToken } = await req.json().catch(() => ({}));
+        const fb = await verifyFirebaseIdToken(idToken, pid);
+        if (!fb || !fb.email) return json({ error: "Google sign-in failed." }, 401);
+        await env.DB.prepare(
+          "INSERT OR IGNORE INTO users(uid,email,salt,hash,created_at) VALUES(?,?,?,?,?)")
+          .bind(fb.uid, fb.email, "", "google", Date.now()).run();
+        const token = await signToken(
+          { uid: fb.uid, email: fb.email, exp: Date.now() / 1000 + SESSION_DAYS * 86400 }, secret);
+        return json({ email: fb.email }, 200, { "set-cookie": setCookie(token) });
+      }
+
       // ---- everything below requires login ----
       const user = await currentUser(req, env);
       if (!user) return json({ error: "Please log in." }, 401);
 
       if (path === "/api/manifest") {
         const items = await getManifest(env);
-        const dl = await env.DB.prepare("SELECT image FROM downloads WHERE uid=?").bind(user.uid).all();
+        const dl = await env.DB.prepare("SELECT image FROM downloads WHERE uid=?").bind(user.email).all();
         const got = new Set((dl.results || []).map((r) => r.image));
         return json({
           total: items.length, downloaded: got.size, pending: items.length - got.size,
@@ -157,7 +211,7 @@ export default {
 
       if (path === "/api/pending") {
         const items = await getManifest(env);
-        const dl = await env.DB.prepare("SELECT COUNT(*) n FROM downloads WHERE uid=?").bind(user.uid).first();
+        const dl = await env.DB.prepare("SELECT COUNT(*) n FROM downloads WHERE uid=?").bind(user.email).first();
         return json({ total: items.length, downloaded: dl.n, pending: items.length - dl.n });
       }
 
@@ -172,7 +226,7 @@ export default {
 
       if (path === "/api/download" && req.method === "POST") {
         const items = await getManifest(env);
-        const dl = await env.DB.prepare("SELECT image FROM downloads WHERE uid=?").bind(user.uid).all();
+        const dl = await env.DB.prepare("SELECT image FROM downloads WHERE uid=?").bind(user.email).all();
         const got = new Set((dl.results || []).map((r) => r.image));
         const pending = items.filter((it) => !got.has(it.key));
         if (pending.length === 0) return json({ done: true, remaining: 0, added: 0 });
@@ -197,7 +251,7 @@ export default {
         const zip = zipSync(files, { level: 4 });
         // log them as downloaded (batch insert)
         const stmt = env.DB.prepare("INSERT OR IGNORE INTO downloads(uid,image,ts) VALUES(?,?,?)");
-        await env.DB.batch(recorded.map((k) => stmt.bind(user.uid, k, now)));
+        await env.DB.batch(recorded.map((k) => stmt.bind(user.email, k, now)));
         const remaining = pending.length - recorded.length;
         return new Response(zip, {
           headers: {

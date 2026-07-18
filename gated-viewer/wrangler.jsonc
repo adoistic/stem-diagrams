@@ -4,6 +4,11 @@
   "main": "src/index.js",
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "FIREBASE_PROJECT_ID": "REPLACE_WITH_PROJECT_ID",
+    "FIREBASE_API_KEY": "REPLACE_WITH_API_KEY",
+    "FIREBASE_AUTH_DOMAIN": "REPLACE_WITH_AUTH_DOMAIN"
+  },
   "r2_buckets": [
     { "binding": "BUCKET", "bucket_name": "stem-diagrams-dataset" }
   ],
