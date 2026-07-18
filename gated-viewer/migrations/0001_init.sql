@@ -1,0 +1,14 @@
+CREATE TABLE IF NOT EXISTS users (
+  uid TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  salt TEXT NOT NULL,
+  hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS downloads (
+  uid TEXT NOT NULL,
+  image TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  PRIMARY KEY (uid, image)
+);
+CREATE INDEX IF NOT EXISTS ix_dl_uid ON downloads(uid);

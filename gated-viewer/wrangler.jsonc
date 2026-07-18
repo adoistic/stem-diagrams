@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stem-diagrams-viewer",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [
+    { "binding": "BUCKET", "bucket_name": "stem-diagrams-dataset" }
+  ],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "stem-diagrams-downloads",
+      "database_id": "68dc2fdd-54e3-450d-8da0-173789378702" }
+  ]
+}
