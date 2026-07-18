@@ -268,6 +268,9 @@ def run(args):
     c = db_conn()
     lock = threading.Lock()
     c.execute("UPDATE papers SET status='pending' WHERE status='processing'")
+    # record start (kept across resumes) + target for the live gallery header
+    c.execute("INSERT OR IGNORE INTO meta(k,v) VALUES('pipeline_start',?)", (str(time.time()),))
+    meta_set(c, "target", args.target)
     # re-enqueue any local images left from a prior run
     for (name, field) in c.execute("SELECT name,field FROM images WHERE status='local'").fetchall():
         fp = WORK / "img_stage" / field / name
