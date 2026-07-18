@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""v3 harvester: deterministic figure extraction + local diagram gate, no Mistral.
+"""v3 harvester (shareable, per-category): deterministic extraction + local gate.
 
 Downloads arXiv PDFs, extracts figure candidates geometrically (PyMuPDF), keeps
-the ones the local SigLIP2+logreg gate calls a proper diagram, and streams
-everything to R2 in zip batches. The laptop only ever holds the current working
-set: PDFs and crops are deleted after their batch uploads. Resumable; stops at
---target accepted diagrams.
-
-Mistral is intentionally unused (that was the whole point). If deterministic
-yield ever proves insufficient it can be added as a capped fallback.
+the ones the local SigLIP2+logreg gate calls a proper diagram, and streams each
+one individually to R2 under v3/img/<category>/ so a single gallery link lets
+anyone browse and download the diagrams for their field. Source PDFs go to R2 as
+size-capped per-category zips. The laptop only holds the current working set.
+No Mistral, no paid API. Resumable; stops at --target accepted diagrams.
 """
 
 import argparse
 import json
 import logging
 import os
+import queue
 import re
 import shutil
 import sqlite3
@@ -29,6 +28,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import extract
+import gallery
 import gate
 import r2
 
@@ -39,7 +39,6 @@ FIELDS = {
     "manufacturing_engineering": "(cat:eess.SY OR cat:physics.app-ph OR cat:cs.CE) AND (abs:manufacturing OR abs:\"additive manufacturing\" OR abs:machining OR abs:\"production line\" OR abs:\"process control\")",
     "robotics_automation": "cat:cs.RO",
     "utilities_power_systems": "cat:eess.SY AND (abs:\"power system\" OR abs:\"power grid\" OR abs:\"smart grid\" OR abs:microgrid OR abs:\"distribution network\" OR abs:\"transmission line\")",
-    "aerospace_engineering": "(cat:eess.SY OR cat:cs.RO OR cat:physics.flu-dyn) AND (abs:aerospace OR abs:aircraft OR abs:spacecraft OR abs:UAV OR abs:satellite OR abs:aerodynamics)",
     "telecommunications": "(cat:eess.SP OR cat:cs.NI OR cat:cs.IT) AND (abs:wireless OR abs:\"communication system\" OR abs:5G OR abs:6G OR abs:antenna OR abs:\"optical fiber\")",
 }
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
@@ -47,13 +46,14 @@ API = "http://export.arxiv.org/api/query"
 
 WORK = Path(__file__).resolve().parent / "work"
 DB = Path(__file__).resolve().parent / "v3_state.db"
-IMG_BATCH = int(os.getenv("IMG_BATCH", "500"))
-PDF_BATCH = int(os.getenv("PDF_BATCH", "120"))
 DL_DELAY = float(os.getenv("DL_DELAY", "2.0"))
 HARVEST_BUFFER = int(os.getenv("HARVEST_BUFFER", "1500"))
+N_UPLOADERS = int(os.getenv("N_UPLOADERS", "4"))
+PDF_ZIP_CAP = int(os.getenv("PDF_ZIP_MB", "220")) * 1024 * 1024
 
 _dl_lock = threading.Lock()
 _last_dl = [0.0]
+_upload_q = queue.Queue()
 
 
 def throttle(delay):
@@ -64,21 +64,18 @@ def throttle(delay):
         _last_dl[0] = time.monotonic()
 
 
-# ---------------- state ----------------
-
 def db_conn():
-    c = sqlite3.connect(DB, isolation_level=None, timeout=60)
+    c = sqlite3.connect(DB, isolation_level=None, timeout=60, check_same_thread=False)
     c.execute("PRAGMA journal_mode=WAL")
     c.executescript("""
     CREATE TABLE IF NOT EXISTS papers(
       arxiv_id TEXT PRIMARY KEY, base_id TEXT, field TEXT, pdf_url TEXT,
-      status TEXT DEFAULT 'pending', pdf_batch TEXT DEFAULT '', n_diagrams INTEGER DEFAULT 0);
+      status TEXT DEFAULT 'pending', pdf_zip TEXT DEFAULT '', n_diagrams INTEGER DEFAULT 0);
     CREATE UNIQUE INDEX IF NOT EXISTS ix_base ON papers(base_id);
     CREATE INDEX IF NOT EXISTS ix_status ON papers(status);
     CREATE TABLE IF NOT EXISTS images(
-      name TEXT PRIMARY KEY, arxiv_id TEXT, field TEXT, page INTEGER,
-      method TEXT, bbox TEXT, p_diagram REAL,
-      status TEXT DEFAULT 'staged', r2_batch TEXT DEFAULT '');
+      name TEXT PRIMARY KEY, arxiv_id TEXT, field TEXT, page INTEGER, method TEXT,
+      bbox TEXT, p_diagram REAL, status TEXT DEFAULT 'local');
     CREATE INDEX IF NOT EXISTS ix_img_status ON images(status);
     CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
     """)
@@ -94,11 +91,36 @@ def meta_set(c, k, v):
     c.execute("INSERT OR REPLACE INTO meta(k,v) VALUES(?,?)", (k, str(v)))
 
 
-def accepted_count(c):
-    return c.execute("SELECT COUNT(*) FROM images WHERE status IN ('staged','uploaded')").fetchone()[0]
+def accepted(c):
+    return c.execute("SELECT COUNT(*) FROM images WHERE status IN ('local','uploaded')").fetchone()[0]
 
 
-# ---------------- arxiv ----------------
+# ---- background image uploader (individual objects, per category) ----
+
+def uploader(c, lock, stop):
+    while not stop.is_set() or not _upload_q.empty():
+        try:
+            name, field, path = _upload_q.get(timeout=1)
+        except queue.Empty:
+            continue
+        key = f"v3/img/{field}/{name}"
+        ok = False
+        for _ in range(3):
+            ok, _msg = r2.put(path, key, "image/png")
+            if ok:
+                break
+            time.sleep(3)
+        with lock:
+            if ok:
+                c.execute("UPDATE images SET status='uploaded' WHERE name=?", (name,))
+                Path(path).unlink(missing_ok=True)
+            else:
+                c.execute("UPDATE images SET status='failed' WHERE name=?", (name,))
+                log.warning("[upload] gave up on %s", name)
+        _upload_q.task_done()
+
+
+# ---- arxiv ----
 
 def parse_entries(xml):
     root = ET.fromstring(xml)
@@ -113,11 +135,11 @@ def parse_entries(xml):
     return out
 
 
-def harvest_loop(stop, target):
-    c = db_conn()
+def harvest_loop(c, lock, stop, target):
     while not stop.is_set():
-        pend = c.execute("SELECT COUNT(*) FROM papers WHERE status='pending'").fetchone()[0]
-        done = accepted_count(c)
+        with lock:
+            pend = c.execute("SELECT COUNT(*) FROM papers WHERE status='pending'").fetchone()[0]
+            done = accepted(c)
         if done >= target:
             return
         if pend >= HARVEST_BUFFER:
@@ -127,28 +149,30 @@ def harvest_loop(stop, target):
         for field, query in FIELDS.items():
             if stop.is_set():
                 return
-            off = int(meta_get(c, f"off_{field}"))
+            with lock:
+                off = int(meta_get(c, f"off_{field}"))
             throttle(DL_DELAY)
             try:
                 resp = requests.get(API, params={
                     "search_query": query, "start": off, "max_results": 100,
                     "sortBy": "submittedDate", "sortOrder": "descending"}, timeout=60)
                 if resp.status_code == 429:
-                    log.warning("[harvest] 429; backing off 120s")
                     stop.wait(120)
                     continue
                 entries = parse_entries(resp.text)
             except Exception as exc:
-                log.warning("[harvest] %s failed: %s", field, exc)
+                log.warning("[harvest] %s: %s", field, exc)
                 continue
-            for aid, pdf in entries:
-                base = aid.rsplit("v", 1)[0]
-                cur = c.execute("INSERT OR IGNORE INTO papers(arxiv_id,base_id,field,pdf_url) VALUES(?,?,?,?)",
-                                (aid, base, field, pdf))
-                added += cur.rowcount
-            meta_set(c, f"off_{field}", off + len(entries))
-        log.info("[harvest] +%d papers (pending now %d)", added,
-                 c.execute("SELECT COUNT(*) FROM papers WHERE status='pending'").fetchone()[0])
+            with lock:
+                for aid, pdf in entries:
+                    base = aid.rsplit("v", 1)[0]
+                    added += c.execute(
+                        "INSERT OR IGNORE INTO papers(arxiv_id,base_id,field,pdf_url) VALUES(?,?,?,?)",
+                        (aid, base, field, pdf)).rowcount
+                meta_set(c, f"off_{field}", off + len(entries))
+        with lock:
+            npend = c.execute("SELECT COUNT(*) FROM papers WHERE status='pending'").fetchone()[0]
+        log.info("[harvest] +%d papers (pending %d)", added, npend)
         if added == 0:
             stop.wait(300)
 
@@ -170,174 +194,161 @@ def download_pdf(url, dest, arxiv_id):
     return False
 
 
-# ---------------- batch commit ----------------
+# ---- per-category PDF zips (size-capped) ----
 
-def commit_images(c):
-    stage = WORK / "img_stage"
-    pngs = sorted(stage.glob("*.png"))
-    if not pngs:
+def commit_pdf_zip(c, field, force=False):
+    d = WORK / "pdf_stage" / field
+    pdfs = sorted(d.glob("*.pdf")) if d.exists() else []
+    if not pdfs:
         return
-    seq = int(meta_get(c, "img_seq")) + 1
-    key = f"v3/images/batch_{seq:05d}.zip"
-    zpath = WORK / f"img_batch_{seq:05d}.zip"
-    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in pngs:
-            z.write(p, p.name)
-    ok, msg = r2.put(zpath, key, "application/zip")
-    if not ok:
-        log.error("[r2] image batch upload failed: %s", msg)
-        zpath.unlink(missing_ok=True)
+    total = sum(p.stat().st_size for p in pdfs)
+    if total < PDF_ZIP_CAP and not force:
         return
-    names = [p.name for p in pngs]
-    c.executemany("UPDATE images SET status='uploaded', r2_batch=? WHERE name=?",
-                  [(key, n) for n in names])
-    meta_set(c, "img_seq", seq)
-    for p in pngs:
-        p.unlink(missing_ok=True)
-    zpath.unlink(missing_ok=True)
-    log.info("[r2] uploaded %s (%d images)", key, len(names))
-
-
-def commit_pdfs(c, force=False):
-    stage = WORK / "pdf_stage"
-    pdfs = sorted(stage.glob("*.pdf"))
-    if not pdfs or (len(pdfs) < PDF_BATCH and not force):
-        return
-    seq = int(meta_get(c, "pdf_seq")) + 1
-    key = f"v3/pdfs/batch_{seq:05d}.zip"
-    zpath = WORK / f"pdf_batch_{seq:05d}.zip"
+    seq = int(meta_get(c, f"pdfseq_{field}")) + 1
+    key = f"v3/pdfs/{field}/batch_{seq:04d}.zip"
+    zpath = WORK / f"pdf_{field}_{seq:04d}.zip"
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_STORED) as z:
         for p in pdfs:
             z.write(p, p.name)
     ok, msg = r2.put(zpath, key, "application/zip")
+    zpath.unlink(missing_ok=True)
     if not ok:
-        log.error("[r2] pdf batch upload failed: %s", msg)
-        zpath.unlink(missing_ok=True)
+        log.error("[r2] pdf zip %s failed: %s", key, msg)
         return
     ids = [p.stem for p in pdfs]
-    c.executemany("UPDATE papers SET pdf_batch=? WHERE arxiv_id=?", [(key, i) for i in ids])
-    meta_set(c, "pdf_seq", seq)
+    c.executemany("UPDATE papers SET pdf_zip=? WHERE arxiv_id=?", [(key, i) for i in ids])
+    meta_set(c, f"pdfseq_{field}", seq)
     for p in pdfs:
         p.unlink(missing_ok=True)
-    zpath.unlink(missing_ok=True)
-    log.info("[r2] uploaded %s (%d pdfs)", key, len(ids))
+    log.info("[r2] uploaded %s (%d pdfs, %.0f MB)", key, len(ids), total / 1e6)
 
 
-def upload_manifest(c):
-    import csv
-    mpath = WORK / "manifest.csv"
-    rows = c.execute("SELECT name,arxiv_id,field,page,method,bbox,p_diagram,r2_batch "
-                     "FROM images WHERE status='uploaded' ORDER BY name").fetchall()
-    with open(mpath, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["image", "arxiv_id", "field", "page", "method", "bbox", "p_diagram", "image_batch"])
-        w.writerows(rows)
-    r2.put(mpath, "v3/manifest.csv", "text/csv")
-    log.info("[r2] manifest updated (%d images)", len(rows))
+# ---- main ----
 
-
-# ---------------- main ----------------
-
-def process_paper(c, paper, gate_threshold):
-    aid, field, pdf_url = paper["arxiv_id"], paper["field"], paper["pdf_url"]
+def process_paper(c, lock, paper, threshold):
+    aid, field = paper["arxiv_id"], paper["field"]
     safe = aid.replace("/", "_")
     pdf_path = WORK / f"{safe}.pdf"
-    if not download_pdf(pdf_url, pdf_path, aid):
-        c.execute("UPDATE papers SET status='failed' WHERE arxiv_id=?", (aid,))
-        return 0
-    # extract candidates
+    if not download_pdf(paper["pdf_url"], pdf_path, aid):
+        with lock:
+            c.execute("UPDATE papers SET status='failed' WHERE arxiv_id=?", (aid,))
+        return
     try:
         cands = list(extract.extract_pdf(pdf_path, max_pages=40))
     except Exception as exc:
-        log.warning("[extract] %s failed: %s", aid, exc)
+        log.warning("[extract] %s: %s", aid, exc)
         cands = []
     n_acc = 0
     if cands:
-        imgs = [cd["image"] for _pno, cd in cands]
-        verdicts = gate.classify(imgs)
-        (WORK / "img_stage").mkdir(exist_ok=True)
+        verdicts = gate.classify([cd["image"] for _p, cd in cands])
+        stage = WORK / "img_stage" / field
+        stage.mkdir(parents=True, exist_ok=True)
         for (pno, cd), (cls, p) in zip(cands, verdicts):
-            if cls == "diagram" and p >= gate_threshold:
+            if cls == "diagram" and p >= threshold:
                 n_acc += 1
                 name = f"{safe}_p{pno:03d}_{cd['method']}_{n_acc:02d}.png"
-                cd["image"].save(WORK / "img_stage" / name)
-                c.execute("INSERT OR IGNORE INTO images(name,arxiv_id,field,page,method,bbox,p_diagram) "
-                          "VALUES(?,?,?,?,?,?,?)",
-                          (name, aid, field, pno, cd["method"], json.dumps(cd["bbox"]), p))
-    # stage the pdf for archival, mark paper done
-    (WORK / "pdf_stage").mkdir(exist_ok=True)
-    shutil.move(str(pdf_path), WORK / "pdf_stage" / f"{safe}.pdf")
-    c.execute("UPDATE papers SET status='done', n_diagrams=? WHERE arxiv_id=?", (n_acc, aid))
-    return n_acc
+                fp = stage / name
+                cd["image"].save(fp)
+                with lock:
+                    c.execute("INSERT OR IGNORE INTO images(name,arxiv_id,field,page,method,bbox,p_diagram) "
+                              "VALUES(?,?,?,?,?,?,?)",
+                              (name, aid, field, pno, cd["method"], json.dumps(cd["bbox"]), p))
+                _upload_q.put((name, field, str(fp)))
+    # archive the pdf per category
+    pstage = WORK / "pdf_stage" / field
+    pstage.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(pdf_path), pstage / f"{safe}.pdf")
+    with lock:
+        c.execute("UPDATE papers SET status='done', n_diagrams=? WHERE arxiv_id=?", (n_acc, aid))
 
 
 def run(args):
-    WORK.mkdir(exist_ok=True)
-    (WORK / "img_stage").mkdir(exist_ok=True)
-    (WORK / "pdf_stage").mkdir(exist_ok=True)
+    for sub in ("img_stage", "pdf_stage", "gallery"):
+        (WORK / sub).mkdir(parents=True, exist_ok=True)
     c = db_conn()
-    # recover: reset papers left 'processing'
+    lock = threading.Lock()
     c.execute("UPDATE papers SET status='pending' WHERE status='processing'")
+    # re-enqueue any local images left from a prior run
+    for (name, field) in c.execute("SELECT name,field FROM images WHERE status='local'").fetchall():
+        fp = WORK / "img_stage" / field / name
+        if fp.exists():
+            _upload_q.put((name, field, str(fp)))
+        else:
+            c.execute("UPDATE images SET status='lost' WHERE name=?", (name,))
 
     stop = threading.Event()
-    ht = threading.Thread(target=harvest_loop, args=(stop, args.target), daemon=True)
-    ht.start()
+    threads = [threading.Thread(target=harvest_loop, args=(c, lock, stop, args.target), daemon=True)]
+    for _ in range(N_UPLOADERS):
+        threads.append(threading.Thread(target=uploader, args=(c, lock, stop), daemon=True))
+    for t in threads:
+        t.start()
 
-    log.info("gate warmup...")
-    gate.classify([__import__("PIL.Image", fromlist=["new"]).new("RGB", (224, 224))])
-    last_manifest = 0.0
-    last_status = 0.0
+    from PIL import Image
+    gate.classify([Image.new("RGB", (224, 224))])  # warmup
+    last_gallery = last_status = 0.0
     try:
         while True:
-            done = accepted_count(c)
+            with lock:
+                done = accepted(c)
             if done >= args.target:
                 log.info("TARGET REACHED: %d accepted diagrams", done)
                 break
-            row = c.execute("SELECT arxiv_id,field,pdf_url FROM papers WHERE status='pending' LIMIT 1").fetchone()
+            with lock:
+                # balance across fields: take a pending paper from whichever
+                # field has the fewest accepted diagrams so far
+                row = c.execute("""
+                  SELECT p.arxiv_id, p.field, p.pdf_url FROM papers p JOIN (
+                    SELECT f.field FROM (SELECT DISTINCT field FROM papers WHERE status='pending') f
+                    LEFT JOIN (SELECT field, COUNT(*) n FROM images
+                               WHERE status IN ('local','uploaded') GROUP BY field) i
+                      ON i.field = f.field
+                    ORDER BY COALESCE(i.n, 0) ASC LIMIT 1
+                  ) pick ON p.field = pick.field
+                  WHERE p.status='pending' LIMIT 1""").fetchone()
+                if row:
+                    c.execute("UPDATE papers SET status='processing' WHERE arxiv_id=?", (row[0],))
             if not row:
-                exhausted = c.execute("SELECT COUNT(*) FROM papers WHERE status='pending'").fetchone()[0] == 0
-                if exhausted and getattr(run, "_harvest_dry", False):
-                    log.warning("no pending papers and harvest dry — stopping at %d", done)
-                    break
                 time.sleep(3)
                 continue
             paper = {"arxiv_id": row[0], "field": row[1], "pdf_url": row[2]}
-            c.execute("UPDATE papers SET status='processing' WHERE arxiv_id=?", (paper["arxiv_id"],))
             try:
-                process_paper(c, paper, args.gate_threshold)
+                process_paper(c, lock, paper, args.gate_threshold)
             except Exception as exc:
-                log.warning("[process] %s failed: %s", paper["arxiv_id"], exc)
-                c.execute("UPDATE papers SET status='failed' WHERE arxiv_id=?", (paper["arxiv_id"],))
-
-            # commit batches when full
-            if len(list((WORK / "img_stage").glob("*.png"))) >= IMG_BATCH:
-                commit_images(c)
-            commit_pdfs(c)
-
+                log.warning("[process] %s: %s", paper["arxiv_id"], exc)
+                with lock:
+                    c.execute("UPDATE papers SET status='failed' WHERE arxiv_id=?", (paper["arxiv_id"],))
+            with lock:
+                for f in FIELDS:
+                    commit_pdf_zip(c, f)
             now = time.monotonic()
             if now - last_status > 30:
                 last_status = now
-                cnt = c.execute("SELECT COUNT(*) FROM papers WHERE status='done'").fetchone()[0]
-                pend = c.execute("SELECT COUNT(*) FROM papers WHERE status='pending'").fetchone()[0]
-                log.info("STATUS accepted %d/%d | papers done %d | pending %d | img_stage %d | pdf_stage %d",
-                         accepted_count(c), args.target, cnt, pend,
-                         len(list((WORK / 'img_stage').glob('*.png'))),
-                         len(list((WORK / 'pdf_stage').glob('*.pdf'))))
-            if now - last_manifest > 300:
-                last_manifest = now
-                commit_images(c)
-                commit_pdfs(c, force=True)
-                upload_manifest(c)
+                with lock:
+                    dn = c.execute("SELECT COUNT(*) FROM papers WHERE status='done'").fetchone()[0]
+                    up = c.execute("SELECT COUNT(*) FROM images WHERE status='uploaded'").fetchone()[0]
+                log.info("STATUS accepted %d/%d | uploaded %d | papers %d | upload_q %d",
+                         done, args.target, up, dn, _upload_q.qsize())
+            if now - last_gallery > 180:
+                last_gallery = now
+                with lock:
+                    ok, ni = gallery.build_and_upload(c)
+                if ok:
+                    log.info("[gallery] refreshed: %d images -> %s/v3/gallery/index.html",
+                             ni, gallery.R2_PUBLIC)
     except KeyboardInterrupt:
-        log.warning("interrupted — committing staged work")
+        log.warning("interrupted")
     finally:
         stop.set()
-        commit_images(c)
-        commit_pdfs(c, force=True)
-        upload_manifest(c)
-    log.info("FINAL: %d accepted diagrams, %d papers done",
-             accepted_count(c),
-             c.execute("SELECT COUNT(*) FROM papers WHERE status='done'").fetchone()[0])
+        log.info("draining %d uploads...", _upload_q.qsize())
+        deadline = time.time() + 120
+        while not _upload_q.empty() and time.time() < deadline:
+            time.sleep(1)
+        with lock:
+            for f in FIELDS:
+                commit_pdf_zip(c, f, force=True)
+            gallery.build_and_upload(c)
+    log.info("FINAL: %d accepted, gallery at %s/v3/gallery/index.html",
+             accepted(c), gallery.R2_PUBLIC)
 
 
 def main():
@@ -351,7 +362,7 @@ def main():
                                   logging.FileHandler(Path(__file__).resolve().parent / "logs" / "v3.log")])
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    code = run(args)
+    run(args)
     logging.shutdown()
     os._exit(0)
 
